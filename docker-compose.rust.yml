@@ -1,0 +1,17 @@
+version: '3'
+services:
+  claude-wrapper:
+    build:
+      context: .
+      dockerfile: Dockerfile.rust
+    ports:
+      - "8000:8000"
+    volumes:
+      - ~/.claude:/root/.claude
+      # Optional: Mount a specific workspace directory
+      # - ./workspace:/workspace
+    environment:
+      - PORT=8000
+      # - CLAUDE_CWD=/workspace
+      # - ANTHROPIC_API_KEY=your-key-here
+      # - API_KEY=your-server-api-key

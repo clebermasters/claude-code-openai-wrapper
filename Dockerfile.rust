@@ -1,0 +1,32 @@
+# Multi-stage build for Claude Code OpenAI Wrapper (Rust)
+
+# Stage 1: Build
+FROM rust:1.84-slim AS builder
+WORKDIR /app
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
+
+# Copy source and build
+COPY Cargo.toml Cargo.lock* ./
+COPY src/ src/
+
+RUN cargo build --release
+
+# Stage 2: Runtime
+FROM debian:bookworm-slim
+
+# Install runtime dependencies + Claude Code CLI
+RUN apt-get update && apt-get install -y \
+    curl ca-certificates libssl3 \
+    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs \
+    && npm install -g @anthropic-ai/claude-code \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy the binary
+COPY --from=builder /app/target/release/claude-code-openai-wrapper /usr/local/bin/claude-code-openai-wrapper
+
+EXPOSE 8000
+
+CMD ["claude-code-openai-wrapper"]
