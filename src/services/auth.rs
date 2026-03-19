@@ -318,19 +318,25 @@ mod tests {
 
     #[test]
     fn test_detect_cli_default() {
-        // Clear all auth env vars
+        // Test with a Config that has no explicit auth method set
+        let config = Config {
+            claude_auth_method: None,
+            ..Config::from_env()
+        };
+        // Remove env vars that would trigger auto-detect
         std::env::remove_var("CLAUDE_CODE_USE_BEDROCK");
         std::env::remove_var("CLAUDE_CODE_USE_VERTEX");
         std::env::remove_var("ANTHROPIC_API_KEY");
-        let config = Config::from_env();
-        let mgr = ClaudeCodeAuthManager::new(&config);
-        assert_eq!(mgr.auth_method, "claude_cli");
+        let method = ClaudeCodeAuthManager::detect_auth_method(&config);
+        assert_eq!(method, "claude_cli");
     }
 
     #[test]
     fn test_detect_explicit_method() {
-        std::env::set_var("CLAUDE_AUTH_METHOD", "bedrock");
-        let config = Config::from_env();
+        let config = Config {
+            claude_auth_method: Some("bedrock".into()),
+            ..Config::from_env()
+        };
         let method = ClaudeCodeAuthManager::detect_auth_method(&config);
         assert_eq!(method, "bedrock");
         std::env::remove_var("CLAUDE_AUTH_METHOD");
