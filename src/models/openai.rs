@@ -283,3 +283,206 @@ impl ChatCompletionStreamResponse {
         self
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_request(json: &str) -> ChatCompletionRequest {
+        serde_json::from_str(json).unwrap()
+    }
+
+    // --- Deserialization ---
+
+    #[test]
+    fn test_deserialize_content_string() {
+        let msg: Message = serde_json::from_str(r#"{"role":"user","content":"hello"}"#).unwrap();
+        assert_eq!(msg.content, "hello");
+    }
+
+    #[test]
+    fn test_deserialize_content_array() {
+        let msg: Message = serde_json::from_str(
+            r#"{"role":"user","content":[{"type":"text","text":"hello"},{"type":"text","text":"world"}]}"#,
+        ).unwrap();
+        assert_eq!(msg.content, "hello\nworld");
+    }
+
+    #[test]
+    fn test_deserialize_stop_string() {
+        let req = make_request(r#"{"messages":[{"role":"user","content":"hi"}],"stop":"END"}"#);
+        assert_eq!(req.stop, Some(vec!["END".to_string()]));
+    }
+
+    #[test]
+    fn test_deserialize_stop_array() {
+        let req = make_request(r#"{"messages":[{"role":"user","content":"hi"}],"stop":["a","b"]}"#);
+        assert_eq!(req.stop, Some(vec!["a".to_string(), "b".to_string()]));
+    }
+
+    #[test]
+    fn test_deserialize_stop_null() {
+        let req = make_request(r#"{"messages":[{"role":"user","content":"hi"}]}"#);
+        assert!(req.stop.is_none());
+    }
+
+    #[test]
+    fn test_deserialize_defaults() {
+        let req = make_request(r#"{"messages":[{"role":"user","content":"hi"}]}"#);
+        assert_eq!(req.temperature, Some(1.0));
+        assert_eq!(req.top_p, Some(1.0));
+        assert_eq!(req.n, Some(1));
+        assert_eq!(req.stream, None);
+        assert!(!req.is_streaming());
+        assert!(!req.tools_enabled());
+    }
+
+    // --- Validation ---
+
+    #[test]
+    fn test_validate_ok() {
+        let req = make_request(r#"{"messages":[{"role":"user","content":"hi"}]}"#);
+        assert!(req.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_n_gt_1() {
+        let req = make_request(r#"{"messages":[{"role":"user","content":"hi"}],"n":3}"#);
+        assert!(req.validate().is_err());
+        assert!(req.validate().unwrap_err().contains("n > 1"));
+    }
+
+    #[test]
+    fn test_validate_temperature_out_of_range() {
+        let req = make_request(r#"{"messages":[{"role":"user","content":"hi"}],"temperature":3.0}"#);
+        assert!(req.validate().is_err());
+    }
+
+    #[test]
+    fn test_validate_top_p_out_of_range() {
+        let req = make_request(r#"{"messages":[{"role":"user","content":"hi"}],"top_p":1.5}"#);
+        assert!(req.validate().is_err());
+    }
+
+    // --- Sampling instructions ---
+
+    #[test]
+    fn test_sampling_default_no_instructions() {
+        let req = make_request(r#"{"messages":[{"role":"user","content":"hi"}]}"#);
+        assert!(req.get_sampling_instructions().is_none());
+    }
+
+    #[test]
+    fn test_sampling_low_temperature() {
+        let req = make_request(r#"{"messages":[{"role":"user","content":"hi"}],"temperature":0.1}"#);
+        let instr = req.get_sampling_instructions().unwrap();
+        assert!(instr.contains("deterministic"));
+    }
+
+    #[test]
+    fn test_sampling_medium_temperature() {
+        let req = make_request(r#"{"messages":[{"role":"user","content":"hi"}],"temperature":0.5}"#);
+        let instr = req.get_sampling_instructions().unwrap();
+        assert!(instr.contains("focused"));
+    }
+
+    #[test]
+    fn test_sampling_high_temperature() {
+        let req = make_request(r#"{"messages":[{"role":"user","content":"hi"}],"temperature":1.8}"#);
+        let instr = req.get_sampling_instructions().unwrap();
+        assert!(instr.contains("creative") || instr.contains("exploratory"));
+    }
+
+    #[test]
+    fn test_sampling_low_top_p() {
+        let req = make_request(r#"{"messages":[{"role":"user","content":"hi"}],"top_p":0.3}"#);
+        let instr = req.get_sampling_instructions().unwrap();
+        assert!(instr.contains("probable"));
+    }
+
+    #[test]
+    fn test_sampling_medium_top_p() {
+        let req = make_request(r#"{"messages":[{"role":"user","content":"hi"}],"top_p":0.7}"#);
+        let instr = req.get_sampling_instructions().unwrap();
+        assert!(instr.contains("well-established"));
+    }
+
+    // --- to_claude_options ---
+
+    #[test]
+    fn test_to_claude_options_basic() {
+        let req = make_request(r#"{"messages":[{"role":"user","content":"hi"}],"model":"opus"}"#);
+        let opts = req.to_claude_options();
+        assert_eq!(opts["model"], "opus");
+        assert!(!opts.contains_key("max_thinking_tokens"));
+    }
+
+    #[test]
+    fn test_to_claude_options_max_tokens() {
+        let req = make_request(r#"{"messages":[{"role":"user","content":"hi"}],"max_tokens":500}"#);
+        let opts = req.to_claude_options();
+        assert_eq!(opts["max_thinking_tokens"], 500);
+    }
+
+    #[test]
+    fn test_to_claude_options_prefers_max_completion_tokens() {
+        let req = make_request(r#"{"messages":[{"role":"user","content":"hi"}],"max_tokens":500,"max_completion_tokens":1000}"#);
+        let opts = req.to_claude_options();
+        assert_eq!(opts["max_thinking_tokens"], 1000);
+    }
+
+    // --- Flags ---
+
+    #[test]
+    fn test_is_streaming() {
+        let req = make_request(r#"{"messages":[{"role":"user","content":"hi"}],"stream":true}"#);
+        assert!(req.is_streaming());
+    }
+
+    #[test]
+    fn test_tools_enabled() {
+        let req = make_request(r#"{"messages":[{"role":"user","content":"hi"}],"enable_tools":true}"#);
+        assert!(req.tools_enabled());
+    }
+
+    // --- Response constructors ---
+
+    #[test]
+    fn test_chat_completion_response_new() {
+        let resp = ChatCompletionResponse::new("opus".into(), "hello".into(), None);
+        assert!(resp.id.starts_with("chatcmpl-"));
+        assert_eq!(resp.object, "chat.completion");
+        assert_eq!(resp.model, "opus");
+        assert_eq!(resp.choices.len(), 1);
+        assert_eq!(resp.choices[0].message.role, "assistant");
+        assert_eq!(resp.choices[0].message.content, "hello");
+        assert_eq!(resp.choices[0].finish_reason, Some("stop".to_string()));
+        assert!(resp.usage.is_none());
+    }
+
+    #[test]
+    fn test_chat_completion_response_with_usage() {
+        let usage = Usage { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 };
+        let resp = ChatCompletionResponse::new("opus".into(), "hi".into(), Some(usage));
+        let u = resp.usage.unwrap();
+        assert_eq!(u.total_tokens, 30);
+    }
+
+    #[test]
+    fn test_stream_response_new() {
+        let resp = ChatCompletionStreamResponse::new(
+            "id-1", "opus", serde_json::json!({"content": "hi"}), None,
+        );
+        assert_eq!(resp.id, "id-1");
+        assert_eq!(resp.object, "chat.completion.chunk");
+        assert!(resp.usage.is_none());
+    }
+
+    #[test]
+    fn test_stream_response_with_usage() {
+        let resp = ChatCompletionStreamResponse::new("id-1", "opus", serde_json::json!({}), Some("stop".into()));
+        let resp = resp.with_usage(Usage { prompt_tokens: 5, completion_tokens: 10, total_tokens: 15 });
+        assert!(resp.usage.is_some());
+        assert_eq!(resp.usage.unwrap().total_tokens, 15);
+    }
+}

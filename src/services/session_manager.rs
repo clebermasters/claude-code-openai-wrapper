@@ -217,6 +217,151 @@ impl SessionManager {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn msg(role: &str, content: &str) -> Message {
+        Message { role: role.into(), content: content.into(), name: None }
+    }
+
+    #[test]
+    fn test_session_new() {
+        let s = Session::new("s1".into());
+        assert_eq!(s.session_id, "s1");
+        assert!(s.messages.is_empty());
+        assert!(!s.is_expired());
+    }
+
+    #[test]
+    fn test_session_add_messages() {
+        let mut s = Session::new("s1".into());
+        s.add_messages(&[msg("user", "hi")]);
+        assert_eq!(s.messages.len(), 1);
+        s.add_messages(&[msg("assistant", "hello")]);
+        assert_eq!(s.messages.len(), 2);
+    }
+
+    #[test]
+    fn test_session_to_info() {
+        let mut s = Session::new("s1".into());
+        s.add_messages(&[msg("user", "hi"), msg("assistant", "hello")]);
+        let info = s.to_session_info();
+        assert_eq!(info.session_id, "s1");
+        assert_eq!(info.message_count, 2);
+    }
+
+    #[test]
+    fn test_session_expiry() {
+        let mut s = Session::new("s1".into());
+        s.expires_at = Utc::now() - Duration::seconds(1);
+        assert!(s.is_expired());
+    }
+
+    #[test]
+    fn test_session_touch_extends_ttl() {
+        let mut s = Session::new("s1".into());
+        s.expires_at = Utc::now() - Duration::seconds(1);
+        assert!(s.is_expired());
+        s.touch();
+        assert!(!s.is_expired());
+    }
+
+    #[tokio::test]
+    async fn test_get_or_create_new() {
+        let mgr = SessionManager::new(1, 300);
+        let s = mgr.get_or_create_session("s1").await;
+        assert_eq!(s.session_id, "s1");
+    }
+
+    #[tokio::test]
+    async fn test_get_or_create_existing() {
+        let mgr = SessionManager::new(1, 300);
+        mgr.get_or_create_session("s1").await;
+        let s = mgr.get_or_create_session("s1").await;
+        assert_eq!(s.session_id, "s1");
+    }
+
+    #[tokio::test]
+    async fn test_get_session_not_found() {
+        let mgr = SessionManager::new(1, 300);
+        assert!(mgr.get_session("missing").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_get_session_found() {
+        let mgr = SessionManager::new(1, 300);
+        mgr.get_or_create_session("s1").await;
+        assert!(mgr.get_session("s1").await.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_delete_session() {
+        let mgr = SessionManager::new(1, 300);
+        mgr.get_or_create_session("s1").await;
+        assert!(mgr.delete_session("s1").await);
+        assert!(!mgr.delete_session("s1").await);
+        assert!(mgr.get_session("s1").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_list_sessions() {
+        let mgr = SessionManager::new(1, 300);
+        mgr.get_or_create_session("s1").await;
+        mgr.get_or_create_session("s2").await;
+        let list = mgr.list_sessions().await;
+        assert_eq!(list.total, 2);
+    }
+
+    #[tokio::test]
+    async fn test_process_messages_stateless() {
+        let mgr = SessionManager::new(1, 300);
+        let msgs = vec![msg("user", "hi")];
+        let (result, sid) = mgr.process_messages(&msgs, None).await;
+        assert_eq!(result.len(), 1);
+        assert!(sid.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_process_messages_with_session() {
+        let mgr = SessionManager::new(1, 300);
+        let (result1, sid1) = mgr.process_messages(&[msg("user", "hi")], Some("s1")).await;
+        assert_eq!(result1.len(), 1);
+        assert_eq!(sid1, Some("s1".into()));
+
+        let (result2, _) = mgr.process_messages(&[msg("user", "hello")], Some("s1")).await;
+        assert_eq!(result2.len(), 2); // accumulated
+    }
+
+    #[tokio::test]
+    async fn test_add_assistant_response() {
+        let mgr = SessionManager::new(1, 300);
+        mgr.get_or_create_session("s1").await;
+        mgr.add_assistant_response("s1", msg("assistant", "hi")).await;
+        let s = mgr.get_session("s1").await.unwrap();
+        assert_eq!(s.messages.len(), 1);
+        assert_eq!(s.messages[0].role, "assistant");
+    }
+
+    #[tokio::test]
+    async fn test_get_stats() {
+        let mgr = SessionManager::new(1, 300);
+        mgr.process_messages(&[msg("user", "hi")], Some("s1")).await;
+        mgr.process_messages(&[msg("user", "hey")], Some("s2")).await;
+        let stats = mgr.get_stats().await;
+        assert_eq!(stats["active_sessions"], 2);
+        assert_eq!(stats["total_messages"], 2);
+    }
+
+    #[tokio::test]
+    async fn test_shutdown() {
+        let mgr = SessionManager::new(1, 300);
+        mgr.get_or_create_session("s1").await;
+        mgr.shutdown().await;
+        assert!(mgr.get_session("s1").await.is_none());
+    }
+}
+
 impl Default for SessionManager {
     fn default() -> Self {
         Self::new(1, SESSION_CLEANUP_INTERVAL_SECS)

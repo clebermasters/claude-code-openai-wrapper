@@ -225,6 +225,21 @@ impl ClaudeCodeAuthManager {
         })
     }
 
+    #[cfg(test)]
+    pub fn new_test(method: &str, api_key: Option<String>) -> Self {
+        Self {
+            auth_method: method.to_string(),
+            auth_status: AuthStatus {
+                method: method.to_string(),
+                valid: true,
+                errors: vec![],
+                config: HashMap::new(),
+            },
+            api_key,
+            runtime_api_key: None,
+        }
+    }
+
     pub fn verify_api_key(&self, provided: Option<&str>) -> Result<(), String> {
         let active_key = self.get_api_key();
 
@@ -238,5 +253,100 @@ impl ClaudeCodeAuthManager {
             Some(key) if key == active_key.unwrap() => Ok(()),
             Some(_) => Err("Invalid API key".to_string()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_verify_api_key_no_key_configured() {
+        let mgr = ClaudeCodeAuthManager::new_test("claude_cli", None);
+        assert!(mgr.verify_api_key(None).is_ok());
+        assert!(mgr.verify_api_key(Some("anything")).is_ok());
+    }
+
+    #[test]
+    fn test_verify_api_key_correct() {
+        let mgr = ClaudeCodeAuthManager::new_test("claude_cli", Some("secret123".into()));
+        assert!(mgr.verify_api_key(Some("secret123")).is_ok());
+    }
+
+    #[test]
+    fn test_verify_api_key_wrong() {
+        let mgr = ClaudeCodeAuthManager::new_test("claude_cli", Some("secret123".into()));
+        let err = mgr.verify_api_key(Some("wrong")).unwrap_err();
+        assert!(err.contains("Invalid"));
+    }
+
+    #[test]
+    fn test_verify_api_key_missing() {
+        let mgr = ClaudeCodeAuthManager::new_test("claude_cli", Some("secret123".into()));
+        let err = mgr.verify_api_key(None).unwrap_err();
+        assert!(err.contains("Missing"));
+    }
+
+    #[test]
+    fn test_runtime_key_overrides_env() {
+        let mut mgr = ClaudeCodeAuthManager::new_test("claude_cli", Some("env_key".into()));
+        mgr.set_runtime_api_key("runtime_key".into());
+        assert_eq!(mgr.get_api_key(), Some("runtime_key"));
+        assert!(mgr.verify_api_key(Some("runtime_key")).is_ok());
+        assert!(mgr.verify_api_key(Some("env_key")).is_err());
+    }
+
+    #[test]
+    fn test_get_api_key_env_only() {
+        let mgr = ClaudeCodeAuthManager::new_test("claude_cli", Some("env_key".into()));
+        assert_eq!(mgr.get_api_key(), Some("env_key"));
+    }
+
+    #[test]
+    fn test_get_auth_info_structure() {
+        let mgr = ClaudeCodeAuthManager::new_test("claude_cli", None);
+        let info = mgr.get_auth_info();
+        assert_eq!(info["method"], "claude_cli");
+        assert!(info["status"]["valid"].as_bool().unwrap());
+    }
+
+    #[test]
+    fn test_cli_auth_env_vars_empty() {
+        let mgr = ClaudeCodeAuthManager::new_test("claude_cli", None);
+        assert!(mgr.get_claude_env_vars().is_empty());
+    }
+
+    #[test]
+    fn test_detect_cli_default() {
+        // Clear all auth env vars
+        std::env::remove_var("CLAUDE_CODE_USE_BEDROCK");
+        std::env::remove_var("CLAUDE_CODE_USE_VERTEX");
+        std::env::remove_var("ANTHROPIC_API_KEY");
+        let config = Config::from_env();
+        let mgr = ClaudeCodeAuthManager::new(&config);
+        assert_eq!(mgr.auth_method, "claude_cli");
+    }
+
+    #[test]
+    fn test_detect_explicit_method() {
+        std::env::set_var("CLAUDE_AUTH_METHOD", "bedrock");
+        let config = Config::from_env();
+        let method = ClaudeCodeAuthManager::detect_auth_method(&config);
+        assert_eq!(method, "bedrock");
+        std::env::remove_var("CLAUDE_AUTH_METHOD");
+    }
+
+    #[test]
+    fn test_validate_cli_is_valid() {
+        let status = ClaudeCodeAuthManager::validate_auth_method("claude_cli");
+        assert!(status.valid);
+        assert!(status.errors.is_empty());
+    }
+
+    #[test]
+    fn test_validate_unknown_method() {
+        let status = ClaudeCodeAuthManager::validate_auth_method("magic");
+        assert!(!status.valid);
+        assert!(!status.errors.is_empty());
     }
 }

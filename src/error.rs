@@ -59,6 +59,78 @@ impl From<std::io::Error> for AppError {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::StatusCode;
+    use http::Response;
+
+    fn status_of(err: AppError) -> StatusCode {
+        let resp = err.into_response();
+        resp.status()
+    }
+
+    #[test]
+    fn test_bad_request_status() {
+        assert_eq!(status_of(AppError::BadRequest("x".into())), StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn test_unauthorized_status() {
+        assert_eq!(status_of(AppError::Unauthorized("x".into())), StatusCode::UNAUTHORIZED);
+    }
+
+    #[test]
+    fn test_not_found_status() {
+        assert_eq!(status_of(AppError::NotFound("x".into())), StatusCode::NOT_FOUND);
+    }
+
+    #[test]
+    fn test_payload_too_large_status() {
+        assert_eq!(status_of(AppError::PayloadTooLarge("x".into())), StatusCode::PAYLOAD_TOO_LARGE);
+    }
+
+    #[test]
+    fn test_rate_limited_status() {
+        assert_eq!(status_of(AppError::RateLimited("x".into())), StatusCode::TOO_MANY_REQUESTS);
+    }
+
+    #[test]
+    fn test_validation_error_status() {
+        assert_eq!(
+            status_of(AppError::ValidationError { message: "x".into(), details: vec![] }),
+            StatusCode::UNPROCESSABLE_ENTITY,
+        );
+    }
+
+    #[test]
+    fn test_service_unavailable_status() {
+        assert_eq!(status_of(AppError::ServiceUnavailable("x".into())), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[test]
+    fn test_internal_status() {
+        assert_eq!(status_of(AppError::Internal("x".into())), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[test]
+    fn test_from_io_error() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "file missing");
+        let app_err = AppError::from(io_err);
+        assert!(matches!(app_err, AppError::Internal(_)));
+    }
+
+    #[test]
+    fn test_display() {
+        assert_eq!(format!("{}", AppError::BadRequest("test".into())), "Bad Request: test");
+        assert_eq!(format!("{}", AppError::Internal("boom".into())), "Internal Error: boom");
+        assert_eq!(
+            format!("{}", AppError::ValidationError { message: "bad".into(), details: vec![] }),
+            "Validation Error: bad",
+        );
+    }
+}
+
 impl std::fmt::Display for AppError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {

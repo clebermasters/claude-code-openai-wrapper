@@ -85,3 +85,105 @@ fn is_truthy_default(key: &str, default: bool) -> bool {
 }
 
 pub type SharedConfig = Arc<Config>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_config_defaults() {
+        // Clear env vars that might interfere
+        std::env::remove_var("PORT");
+        std::env::remove_var("DEBUG_MODE");
+        std::env::remove_var("VERBOSE");
+        std::env::remove_var("CLAUDE_CWD");
+        std::env::remove_var("API_KEY");
+        std::env::remove_var("CLAUDE_AUTH_METHOD");
+
+        let config = Config::from_env();
+        assert_eq!(config.port, 8000);
+        assert_eq!(config.host, "0.0.0.0");
+        assert_eq!(config.claude_cli_path, "claude");
+        assert_eq!(config.max_timeout_ms, 600_000);
+        assert_eq!(config.max_request_size, 10 * 1024 * 1024);
+        assert!(!config.debug_mode);
+        assert!(!config.verbose);
+        assert!(config.api_key.is_none());
+        assert!(config.claude_cwd.is_none());
+    }
+
+    #[test]
+    fn test_config_is_debug() {
+        let mut config = Config::from_env();
+        config.debug_mode = false;
+        config.verbose = false;
+        assert!(!config.is_debug());
+
+        config.debug_mode = true;
+        assert!(config.is_debug());
+
+        config.debug_mode = false;
+        config.verbose = true;
+        assert!(config.is_debug());
+    }
+
+    #[test]
+    fn test_env_or_with_default() {
+        std::env::remove_var("__TEST_ENV_OR_MISSING");
+        assert_eq!(env_or::<u16>("__TEST_ENV_OR_MISSING", 42), 42);
+    }
+
+    #[test]
+    fn test_env_or_with_value() {
+        std::env::set_var("__TEST_ENV_OR_SET", "99");
+        assert_eq!(env_or::<u16>("__TEST_ENV_OR_SET", 42), 99);
+        std::env::remove_var("__TEST_ENV_OR_SET");
+    }
+
+    #[test]
+    fn test_env_or_invalid_parse() {
+        std::env::set_var("__TEST_ENV_OR_BAD", "not_a_number");
+        assert_eq!(env_or::<u16>("__TEST_ENV_OR_BAD", 42), 42);
+        std::env::remove_var("__TEST_ENV_OR_BAD");
+    }
+
+    #[test]
+    fn test_is_truthy() {
+        std::env::remove_var("__TEST_TRUTHY");
+        assert!(!is_truthy("__TEST_TRUTHY"));
+
+        for val in &["true", "1", "yes", "on", "TRUE", "Yes", "ON"] {
+            std::env::set_var("__TEST_TRUTHY", val);
+            assert!(is_truthy("__TEST_TRUTHY"), "Expected truthy for '{val}'");
+        }
+
+        for val in &["false", "0", "no", "off", "random"] {
+            std::env::set_var("__TEST_TRUTHY", val);
+            assert!(!is_truthy("__TEST_TRUTHY"), "Expected falsy for '{val}'");
+        }
+        std::env::remove_var("__TEST_TRUTHY");
+    }
+
+    #[test]
+    fn test_is_truthy_default() {
+        std::env::remove_var("__TEST_TRUTHY_DEF");
+        assert!(is_truthy_default("__TEST_TRUTHY_DEF", true));
+        assert!(!is_truthy_default("__TEST_TRUTHY_DEF", false));
+
+        std::env::set_var("__TEST_TRUTHY_DEF", "true");
+        assert!(is_truthy_default("__TEST_TRUTHY_DEF", false));
+
+        std::env::set_var("__TEST_TRUTHY_DEF", "false");
+        assert!(!is_truthy_default("__TEST_TRUTHY_DEF", true));
+        std::env::remove_var("__TEST_TRUTHY_DEF");
+    }
+
+    #[test]
+    fn test_cors_origins_parsing() {
+        std::env::set_var("CORS_ORIGINS", r#"["http://localhost:3000","http://example.com"]"#);
+        let config = Config::from_env();
+        assert_eq!(config.cors_origins.len(), 2);
+        assert!(config.cors_origins.contains(&"http://localhost:3000".to_string()));
+        std::env::remove_var("CORS_ORIGINS");
+    }
+}

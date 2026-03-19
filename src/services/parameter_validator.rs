@@ -121,3 +121,107 @@ impl CompatibilityReporter {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::openai::ChatCompletionRequest;
+
+    fn make_req(json: &str) -> ChatCompletionRequest {
+        serde_json::from_str(json).unwrap()
+    }
+
+    #[test]
+    fn test_validate_model_known() {
+        assert!(ParameterValidator::validate_model("claude-sonnet-4-5-20250929"));
+    }
+
+    #[test]
+    fn test_validate_model_unknown_still_passes() {
+        // Graceful degradation: unknown models still return true
+        assert!(ParameterValidator::validate_model("fake-model"));
+    }
+
+    #[test]
+    fn test_validate_permission_mode_valid() {
+        assert!(ParameterValidator::validate_permission_mode("bypassPermissions"));
+        assert!(ParameterValidator::validate_permission_mode("default"));
+        assert!(ParameterValidator::validate_permission_mode("plan"));
+    }
+
+    #[test]
+    fn test_validate_permission_mode_invalid() {
+        assert!(!ParameterValidator::validate_permission_mode("invalid"));
+    }
+
+    #[test]
+    fn test_validate_tools_valid() {
+        assert!(ParameterValidator::validate_tools(&["Read".into(), "Write".into()]));
+    }
+
+    #[test]
+    fn test_validate_tools_empty_string() {
+        assert!(!ParameterValidator::validate_tools(&["".into()]));
+    }
+
+    #[test]
+    fn test_extract_claude_headers_max_turns() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("x-claude-max-turns", "5".parse().unwrap());
+        let opts = ParameterValidator::extract_claude_headers(&headers);
+        assert_eq!(opts["max_turns"], 5);
+    }
+
+    #[test]
+    fn test_extract_claude_headers_allowed_tools() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("x-claude-allowed-tools", "Read,Write,Bash".parse().unwrap());
+        let opts = ParameterValidator::extract_claude_headers(&headers);
+        let tools = opts["allowed_tools"].as_array().unwrap();
+        assert_eq!(tools.len(), 3);
+    }
+
+    #[test]
+    fn test_extract_claude_headers_permission_mode() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("x-claude-permission-mode", "bypassPermissions".parse().unwrap());
+        let opts = ParameterValidator::extract_claude_headers(&headers);
+        assert_eq!(opts["permission_mode"], "bypassPermissions");
+    }
+
+    #[test]
+    fn test_extract_claude_headers_empty() {
+        let headers = axum::http::HeaderMap::new();
+        let opts = ParameterValidator::extract_claude_headers(&headers);
+        assert!(opts.is_empty());
+    }
+
+    #[test]
+    fn test_extract_claude_headers_invalid_int() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("x-claude-max-turns", "abc".parse().unwrap());
+        let opts = ParameterValidator::extract_claude_headers(&headers);
+        assert!(!opts.contains_key("max_turns"));
+    }
+
+    #[test]
+    fn test_compatibility_report_defaults() {
+        let req = make_req(r#"{"messages":[{"role":"user","content":"hi"}]}"#);
+        let report = CompatibilityReporter::generate_report(&req);
+        let supported = report["supported_parameters"].as_array().unwrap();
+        assert!(supported.iter().any(|v| v == "model"));
+        assert!(supported.iter().any(|v| v == "messages"));
+        let unsupported = report["unsupported_parameters"].as_array().unwrap();
+        assert!(unsupported.is_empty());
+    }
+
+    #[test]
+    fn test_compatibility_report_unsupported() {
+        let req = make_req(r#"{"messages":[{"role":"user","content":"hi"}],"temperature":0.5,"stop":"END","logit_bias":{"1":0.5}}"#);
+        let report = CompatibilityReporter::generate_report(&req);
+        let unsupported = report["unsupported_parameters"].as_array().unwrap();
+        assert!(unsupported.iter().any(|v| v == "temperature"));
+        assert!(unsupported.iter().any(|v| v == "stop"));
+        assert!(unsupported.iter().any(|v| v == "logit_bias"));
+    }
+}

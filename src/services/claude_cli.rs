@@ -463,3 +463,263 @@ fn parse_stream_event(json: &serde_json::Value) -> StreamEvent {
     // Default: skip system/rate_limit messages
     StreamEvent::Text(String::new())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- extract_text_from_content ---
+
+    #[test]
+    fn test_extract_text_from_content_none() {
+        assert!(extract_text_from_content(None).is_none());
+    }
+
+    #[test]
+    fn test_extract_text_from_content_non_array() {
+        let val = serde_json::json!("just a string");
+        assert!(extract_text_from_content(Some(&val)).is_none());
+    }
+
+    #[test]
+    fn test_extract_text_from_content_text_block() {
+        let val = serde_json::json!([{"type": "text", "text": "hello"}]);
+        assert_eq!(extract_text_from_content(Some(&val)).unwrap(), "hello");
+    }
+
+    #[test]
+    fn test_extract_text_from_content_multiple_blocks() {
+        let val = serde_json::json!([
+            {"type": "text", "text": "line1"},
+            {"type": "tool_use", "name": "Bash"},
+            {"type": "text", "text": "line2"}
+        ]);
+        assert_eq!(extract_text_from_content(Some(&val)).unwrap(), "line1\nline2");
+    }
+
+    #[test]
+    fn test_extract_text_from_content_no_text_blocks() {
+        let val = serde_json::json!([{"type": "tool_use", "name": "Bash"}]);
+        assert!(extract_text_from_content(Some(&val)).is_none());
+    }
+
+    // --- parse_stream_event ---
+
+    #[test]
+    fn test_parse_stream_event_result() {
+        let json = serde_json::json!({"subtype": "success", "result": "answer"});
+        match parse_stream_event(&json) {
+            StreamEvent::Result(text) => assert_eq!(text, "answer"),
+            other => panic!("Expected Result, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_stream_event_assistant() {
+        let json = serde_json::json!({
+            "type": "assistant",
+            "message": {"content": [{"type": "text", "text": "hi there"}]}
+        });
+        match parse_stream_event(&json) {
+            StreamEvent::AssistantText(text) => assert_eq!(text, "hi there"),
+            other => panic!("Expected AssistantText, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_stream_event_direct_content() {
+        let json = serde_json::json!({"content": [{"type": "text", "text": "direct"}]});
+        match parse_stream_event(&json) {
+            StreamEvent::AssistantText(text) => assert_eq!(text, "direct"),
+            other => panic!("Expected AssistantText, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_stream_event_error() {
+        let json = serde_json::json!({"is_error": true, "result": "something broke"});
+        match parse_stream_event(&json) {
+            StreamEvent::Error(msg) => assert_eq!(msg, "something broke"),
+            other => panic!("Expected Error, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_stream_event_error_fallback() {
+        let json = serde_json::json!({"is_error": true, "error_message": "fail"});
+        match parse_stream_event(&json) {
+            StreamEvent::Error(msg) => assert_eq!(msg, "fail"),
+            other => panic!("Expected Error, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_stream_event_system_ignored() {
+        let json = serde_json::json!({"type": "system", "subtype": "init"});
+        match parse_stream_event(&json) {
+            StreamEvent::Text(t) => assert!(t.is_empty()),
+            other => panic!("Expected empty Text, got {:?}", other),
+        }
+    }
+
+    // --- extract_result_text ---
+
+    fn make_cli() -> ClaudeCli {
+        let config = std::sync::Arc::new(crate::config::Config::from_env());
+        ClaudeCli {
+            cli_path: "claude".into(),
+            config,
+            cwd: std::path::PathBuf::from("/tmp"),
+            auth_env_vars: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn test_extract_result_text_single_json() {
+        let cli = make_cli();
+        let output = r#"{"result": "Four."}"#;
+        assert_eq!(cli.extract_result_text(output), Some("Four.".into()));
+    }
+
+    #[test]
+    fn test_extract_result_text_content_array() {
+        let cli = make_cli();
+        let output = r#"{"content": [{"type": "text", "text": "Hello world"}]}"#;
+        assert_eq!(cli.extract_result_text(output), Some("Hello world".into()));
+    }
+
+    #[test]
+    fn test_extract_result_text_ndjson() {
+        let cli = make_cli();
+        let output = r#"{"type":"system","subtype":"init"}
+{"type":"assistant","message":{"content":[{"type":"text","text":"Hello"}]}}
+{"subtype":"success","result":"Hello"}"#;
+        assert_eq!(cli.extract_result_text(output), Some("Hello".into()));
+    }
+
+    #[test]
+    fn test_extract_result_text_empty() {
+        let cli = make_cli();
+        assert!(cli.extract_result_text("").is_none());
+    }
+
+    #[test]
+    fn test_extract_result_text_invalid_json() {
+        let cli = make_cli();
+        assert!(cli.extract_result_text("not json at all").is_none());
+    }
+
+    // --- extract_metadata ---
+
+    #[test]
+    fn test_extract_metadata_success() {
+        let cli = make_cli();
+        let output = r#"{"subtype":"success","total_cost_usd":0.05,"duration_ms":1234,"num_turns":2,"session_id":"abc-123"}"#;
+        let meta = cli.extract_metadata_from_output(output);
+        assert_eq!(meta.total_cost_usd, 0.05);
+        assert_eq!(meta.duration_ms, 1234);
+        assert_eq!(meta.num_turns, 2);
+        assert_eq!(meta.session_id, Some("abc-123".into()));
+    }
+
+    #[test]
+    fn test_extract_metadata_init() {
+        let cli = make_cli();
+        let output = r#"{"subtype":"init","data":{"session_id":"sid-1","model":"opus"}}"#;
+        let meta = cli.extract_metadata_from_output(output);
+        assert_eq!(meta.session_id, Some("sid-1".into()));
+        assert_eq!(meta.model, Some("opus".into()));
+    }
+
+    #[test]
+    fn test_extract_metadata_empty() {
+        let cli = make_cli();
+        let meta = cli.extract_metadata_from_output("");
+        assert!(meta.session_id.is_none());
+        assert_eq!(meta.total_cost_usd, 0.0);
+    }
+
+    // --- estimate_token_usage ---
+
+    #[test]
+    fn test_estimate_tokens() {
+        let cli = make_cli();
+        let (p, c) = cli.estimate_token_usage("Hello world!", "Hi");
+        assert_eq!(p, 3); // 12 / 4
+        assert_eq!(c, 1); // min 1
+    }
+
+    #[test]
+    fn test_estimate_tokens_empty() {
+        let cli = make_cli();
+        let (p, c) = cli.estimate_token_usage("", "");
+        assert_eq!(p, 1); // min 1
+        assert_eq!(c, 1);
+    }
+
+    // --- build_args ---
+
+    #[test]
+    fn test_build_args_basic() {
+        let cli = make_cli();
+        let args = cli.build_args("hello", None, Some("opus"), None, None, None, false);
+        assert!(args.contains(&"--print".to_string()));
+        assert!(args.contains(&"json".to_string()));
+        assert!(args.contains(&"--model".to_string()));
+        assert!(args.contains(&"opus".to_string()));
+        assert_eq!(args.last().unwrap(), "hello");
+        assert!(!args.contains(&"--verbose".to_string()));
+    }
+
+    #[test]
+    fn test_build_args_stream_json() {
+        let cli = make_cli();
+        let args = cli.build_args("hello", None, None, None, None, None, true);
+        assert!(args.contains(&"stream-json".to_string()));
+        assert!(args.contains(&"--verbose".to_string()));
+    }
+
+    #[test]
+    fn test_build_args_system_prompt() {
+        let cli = make_cli();
+        let args = cli.build_args("hello", Some("be helpful"), None, None, None, None, false);
+        let idx = args.iter().position(|a| a == "--system-prompt").unwrap();
+        assert_eq!(args[idx + 1], "be helpful");
+    }
+
+    #[test]
+    fn test_build_args_allowed_tools() {
+        let cli = make_cli();
+        let tools = vec!["Read".into(), "Write".into()];
+        let args = cli.build_args("hello", None, None, Some(&tools), None, None, false);
+        assert!(args.contains(&"--allowedTools".to_string()));
+        assert!(args.contains(&"Read,Write".to_string()));
+    }
+
+    #[test]
+    fn test_build_args_permission_mode() {
+        let cli = make_cli();
+        let args = cli.build_args("hello", None, None, None, None, Some("bypassPermissions"), false);
+        assert!(args.contains(&"--permission-mode".to_string()));
+        assert!(args.contains(&"bypassPermissions".to_string()));
+    }
+
+    #[test]
+    fn test_build_args_all_tools_disabled_skips_flag() {
+        let cli = make_cli();
+        let all: Vec<String> = crate::constants::CLAUDE_TOOLS.iter().map(|s| s.to_string()).collect();
+        let args = cli.build_args("hello", None, None, None, Some(&all), None, false);
+        // Should NOT contain --disallowedTools or --tools when all disabled
+        assert!(!args.contains(&"--disallowedTools".to_string()));
+        assert!(!args.contains(&"--tools".to_string()));
+    }
+
+    #[test]
+    fn test_build_args_partial_disallowed() {
+        let cli = make_cli();
+        let tools = vec!["Task".into(), "WebFetch".into()];
+        let args = cli.build_args("hello", None, None, None, Some(&tools), None, false);
+        assert!(args.contains(&"--disallowedTools".to_string()));
+        assert!(args.contains(&"Task,WebFetch".to_string()));
+    }
+}

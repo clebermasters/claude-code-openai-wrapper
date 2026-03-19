@@ -214,6 +214,11 @@ impl ToolManager {
         names.iter().map(|n| (n.clone(), CLAUDE_TOOLS.contains(&n.as_str()))).collect()
     }
 
+    #[cfg(test)]
+    pub async fn delete_session_config(&self, session_id: &str) -> bool {
+        self.session_configs.write().await.remove(session_id).is_some()
+    }
+
     pub async fn get_stats(&self) -> serde_json::Value {
         let config = self.global_config.read().await;
         let session_count = self.session_configs.read().await.len();
@@ -231,5 +236,121 @@ impl ToolManager {
                 "agent": self.metadata.values().filter(|t| t.category == "agent").count(),
             },
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- ToolConfiguration ---
+
+    #[test]
+    fn test_effective_tools_default() {
+        let config = ToolConfiguration::default();
+        let tools = config.get_effective_tools();
+        // No allowed/disallowed => all CLAUDE_TOOLS
+        assert_eq!(tools.len(), CLAUDE_TOOLS.len());
+    }
+
+    #[test]
+    fn test_effective_tools_with_allowed() {
+        let config = ToolConfiguration {
+            allowed_tools: Some(vec!["Read".into(), "Write".into()]),
+            disallowed_tools: None,
+            ..Default::default()
+        };
+        let tools = config.get_effective_tools();
+        assert_eq!(tools.len(), 2);
+        assert!(tools.contains("Read"));
+        assert!(tools.contains("Write"));
+    }
+
+    #[test]
+    fn test_effective_tools_with_disallowed() {
+        let config = ToolConfiguration {
+            allowed_tools: None,
+            disallowed_tools: Some(vec!["Task".into(), "WebFetch".into()]),
+            ..Default::default()
+        };
+        let tools = config.get_effective_tools();
+        assert!(!tools.contains("Task"));
+        assert!(!tools.contains("WebFetch"));
+        assert!(tools.contains("Read"));
+    }
+
+    #[test]
+    fn test_effective_tools_both() {
+        let config = ToolConfiguration {
+            allowed_tools: Some(vec!["Read".into(), "Write".into(), "Bash".into()]),
+            disallowed_tools: Some(vec!["Bash".into()]),
+            ..Default::default()
+        };
+        let tools = config.get_effective_tools();
+        assert_eq!(tools.len(), 2);
+        assert!(tools.contains("Read"));
+        assert!(!tools.contains("Bash"));
+    }
+
+    #[test]
+    fn test_config_update() {
+        let mut config = ToolConfiguration::default();
+        let before = config.updated_at;
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        config.update(Some(vec!["Read".into()]), None);
+        assert_eq!(config.allowed_tools, Some(vec!["Read".into()]));
+        assert!(config.updated_at >= before);
+    }
+
+    // --- ToolManager ---
+
+    #[tokio::test]
+    async fn test_list_all_tools() {
+        let mgr = ToolManager::new();
+        let tools = mgr.list_all_tools();
+        assert_eq!(tools.len(), CLAUDE_TOOLS.len());
+    }
+
+    #[test]
+    fn test_validate_tools() {
+        let mgr = ToolManager::new();
+        let result = mgr.validate_tools(&["Read".into(), "Fake".into()]);
+        assert_eq!(result["Read"], true);
+        assert_eq!(result["Fake"], false);
+    }
+
+    #[tokio::test]
+    async fn test_get_effective_tools_default() {
+        let mgr = ToolManager::new();
+        let tools = mgr.get_effective_tools(None).await;
+        // Global config has DEFAULT_ALLOWED_TOOLS minus DEFAULT_DISALLOWED_TOOLS
+        assert!(tools.contains(&"Read".to_string()));
+        assert!(!tools.contains(&"Task".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_session_config_overrides_global() {
+        let mgr = ToolManager::new();
+        mgr.set_session_config("s1", Some(vec!["Bash".into()]), None).await;
+        let tools = mgr.get_effective_tools(Some("s1")).await;
+        assert_eq!(tools, vec!["Bash".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn test_update_global_config() {
+        let mgr = ToolManager::new();
+        mgr.update_global_config(Some(vec!["Read".into(), "Grep".into()]), None).await;
+        let tools = mgr.get_effective_tools(None).await;
+        assert!(tools.contains(&"Read".to_string()));
+        assert!(tools.contains(&"Grep".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_get_stats() {
+        let mgr = ToolManager::new();
+        mgr.set_session_config("s1", Some(vec!["Read".into()]), None).await;
+        let stats = mgr.get_stats().await;
+        assert_eq!(stats["total_tools"], CLAUDE_TOOLS.len());
+        assert_eq!(stats["session_configs"], 1);
     }
 }

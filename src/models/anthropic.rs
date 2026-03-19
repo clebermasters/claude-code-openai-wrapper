@@ -98,6 +98,54 @@ pub struct AnthropicMessagesResponse {
     pub usage: AnthropicUsage,
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_to_openai_messages_string_content() {
+        let req: AnthropicMessagesRequest = serde_json::from_str(r#"{
+            "model": "opus",
+            "messages": [
+                {"role": "user", "content": "hello"},
+                {"role": "assistant", "content": "hi"}
+            ],
+            "max_tokens": 100
+        }"#).unwrap();
+        let msgs = req.to_openai_messages();
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[0].role, "user");
+        assert_eq!(msgs[0].content, "hello");
+        assert_eq!(msgs[1].role, "assistant");
+    }
+
+    #[test]
+    fn test_to_openai_messages_block_content() {
+        let req: AnthropicMessagesRequest = serde_json::from_str(r#"{
+            "model": "opus",
+            "messages": [
+                {"role": "user", "content": [{"type": "text", "text": "part1"}, {"type": "text", "text": "part2"}]}
+            ],
+            "max_tokens": 100
+        }"#).unwrap();
+        let msgs = req.to_openai_messages();
+        assert_eq!(msgs[0].content, "part1\npart2");
+    }
+
+    #[test]
+    fn test_anthropic_response_new() {
+        let resp = AnthropicMessagesResponse::new("opus".into(), "hi".into(), 10, 20);
+        assert!(resp.id.starts_with("msg_"));
+        assert_eq!(resp.r#type, "message");
+        assert_eq!(resp.role, "assistant");
+        assert_eq!(resp.content[0].text, "hi");
+        assert_eq!(resp.model, "opus");
+        assert_eq!(resp.stop_reason, Some("end_turn".to_string()));
+        assert_eq!(resp.usage.input_tokens, 10);
+        assert_eq!(resp.usage.output_tokens, 20);
+    }
+}
+
 impl AnthropicMessagesResponse {
     pub fn new(model: String, text: String, input_tokens: u32, output_tokens: u32) -> Self {
         Self {
