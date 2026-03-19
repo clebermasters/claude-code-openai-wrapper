@@ -396,6 +396,7 @@ The `X-Claude-Model` header takes precedence over the `model` field in the reque
 |--------|------|-------------|
 | `Authorization` | `Bearer <key>` | API key (if configured) |
 | `X-Claude-Model` | string | Override request model |
+| `X-Claude-Effort` | string | Effort level: `low`, `medium`, `high`, `max` |
 | `X-Claude-Max-Turns` | integer | Max agent turns (default: unlimited) |
 | `X-Claude-Max-Thinking-Tokens` | integer | Extended thinking token budget |
 | `X-Claude-Include-Thinking` | `true`/`false` | Return thinking in response |

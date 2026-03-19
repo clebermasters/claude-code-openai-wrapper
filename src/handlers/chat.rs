@@ -110,6 +110,11 @@ async fn generate_non_streaming_response(
         .or(request.include_thinking)
         .unwrap_or(false);
 
+    let effort = claude_headers
+        .get("effort")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+
     // Run Claude CLI
     let result = state
         .claude_cli
@@ -122,6 +127,7 @@ async fn generate_non_streaming_response(
             permission_mode.as_deref(),
             max_turns,
             include_thinking,
+            effort.as_deref(),
         )
         .await
         .map_err(AppError::Internal)?;
@@ -227,6 +233,11 @@ fn generate_streaming_response(
             .or(request.include_thinking)
             .unwrap_or(false);
 
+        let effort = claude_headers
+            .get("effort")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+
         // Start streaming
         let rx = match state.claude_cli.run_completion_stream(
             &prompt,
@@ -236,6 +247,7 @@ fn generate_streaming_response(
             disallowed.as_deref(),
             permission_mode.as_deref(),
             max_turns,
+            effort.as_deref(),
         ).await {
             Ok(rx) => rx,
             Err(e) => {

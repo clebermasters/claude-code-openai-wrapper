@@ -74,6 +74,15 @@ impl ParameterValidator {
             options.insert("include_thinking".to_string(), serde_json::json!(include));
         }
 
+        if let Some(val) = headers.get("x-claude-effort").and_then(|v| v.to_str().ok()) {
+            let effort = val.to_lowercase();
+            if ["low", "medium", "high", "max"].contains(&effort.as_str()) {
+                options.insert("effort".to_string(), serde_json::json!(effort));
+            } else {
+                warn!("Invalid X-Claude-Effort header: {val}. Valid: low, medium, high, max");
+            }
+        }
+
         options
     }
 }
@@ -223,6 +232,24 @@ mod tests {
         headers.insert("x-claude-include-thinking", "false".parse().unwrap());
         let opts = ParameterValidator::extract_claude_headers(&headers);
         assert_eq!(opts["include_thinking"], false);
+    }
+
+    #[test]
+    fn test_extract_claude_headers_effort() {
+        for level in &["low", "medium", "high", "max"] {
+            let mut headers = axum::http::HeaderMap::new();
+            headers.insert("x-claude-effort", level.parse().unwrap());
+            let opts = ParameterValidator::extract_claude_headers(&headers);
+            assert_eq!(opts["effort"], *level);
+        }
+    }
+
+    #[test]
+    fn test_extract_claude_headers_effort_invalid() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("x-claude-effort", "extreme".parse().unwrap());
+        let opts = ParameterValidator::extract_claude_headers(&headers);
+        assert!(!opts.contains_key("effort"));
     }
 
     #[test]

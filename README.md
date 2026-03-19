@@ -2,7 +2,7 @@
   <img src="https://img.shields.io/badge/Rust-000000?style=for-the-badge&logo=rust&logoColor=white" alt="Rust">
   <img src="https://img.shields.io/badge/Axum-0.8-blue?style=for-the-badge" alt="Axum 0.8">
   <img src="https://img.shields.io/badge/version-2.2.0-green?style=for-the-badge" alt="Version 2.2.0">
-  <img src="https://img.shields.io/badge/tests-167_passing-brightgreen?style=for-the-badge" alt="167 Tests Passing">
+  <img src="https://img.shields.io/badge/tests-171_passing-brightgreen?style=for-the-badge" alt="171 Tests Passing">
   <img src="https://img.shields.io/badge/binary-4.7MB-orange?style=for-the-badge" alt="4.7MB Binary">
 </p>
 
@@ -334,6 +334,7 @@ Pass Claude-specific options via HTTP headers:
 | Header | Example | Description |
 |--------|---------|-------------|
 | `X-Claude-Model` | `claude-opus-4-6` | Override model per-request |
+| `X-Claude-Effort` | `low\|medium\|high\|max` | Control response effort level |
 | `X-Claude-Max-Turns` | `20` | Max agent turns for this request |
 | `X-Claude-Max-Thinking-Tokens` | `10000` | Extended thinking token budget |
 | `X-Claude-Include-Thinking` | `true` | Return thinking in response |
@@ -396,11 +397,11 @@ src/
 
 ```bash
 cargo test
-# running 167 tests
-# test result: ok. 167 passed; 0 failed
+# running 171 tests
+# test result: ok. 171 passed; 0 failed
 ```
 
-**167 unit tests** across 14 modules covering models, services, auth, sessions, CLI parsing, content filtering, thinking extraction, and rate limiting.
+**171 unit tests** across 14 modules covering models, services, auth, sessions, CLI parsing, content filtering, thinking extraction, and rate limiting.
 
 ---
 
