@@ -209,6 +209,19 @@ impl ClaudeCodeAuthManager {
             _ => {} // claude_cli: no env vars needed
         }
 
+        // Forward Claude Code CLI env vars that control timeouts and output limits.
+        // These are read by the CLI subprocess, not by the wrapper itself.
+        for var in &[
+            "CLAUDE_CODE_MAX_OUTPUT_TOKENS",
+            "BASH_DEFAULT_TIMEOUT_MS",
+            "BASH_MAX_TIMEOUT_MS",
+            "MAX_THINKING_TOKENS",
+        ] {
+            if let Ok(val) = std::env::var(var) {
+                env.insert(var.to_string(), val);
+            }
+        }
+
         env
     }
 

@@ -21,6 +21,10 @@ pub struct Config {
     pub rate_limit_auth_per_minute: u32,
     pub rate_limit_session_per_minute: u32,
     pub rate_limit_health_per_minute: u32,
+    /// Max output tokens passed to Claude CLI via env var (0 = let CLI decide)
+    pub cli_max_output_tokens: u32,
+    /// Max agent turns for CLI --max-turns (0 = unlimited)
+    pub cli_max_turns: u32,
 }
 
 impl Config {
@@ -56,6 +60,8 @@ impl Config {
             rate_limit_auth_per_minute: env_or("RATE_LIMIT_AUTH_PER_MINUTE", 10),
             rate_limit_session_per_minute: env_or("RATE_LIMIT_SESSION_PER_MINUTE", 15),
             rate_limit_health_per_minute: env_or("RATE_LIMIT_HEALTH_PER_MINUTE", 30),
+            cli_max_output_tokens: env_or("CLAUDE_CODE_MAX_OUTPUT_TOKENS", 0),
+            cli_max_turns: env_or("CLAUDE_CLI_MAX_TURNS", 0),
         }
     }
 

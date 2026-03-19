@@ -98,6 +98,12 @@ async fn generate_non_streaming_response(
         .map(String::from)
         .unwrap_or_else(|| request.model.clone());
 
+    // Extract max_turns from headers
+    let max_turns = claude_headers
+        .get("max_turns")
+        .and_then(|v| v.as_u64())
+        .map(|v| v as u32);
+
     // Run Claude CLI
     let result = state
         .claude_cli
@@ -108,6 +114,7 @@ async fn generate_non_streaming_response(
             allowed.as_deref(),
             disallowed.as_deref(),
             permission_mode.as_deref(),
+            max_turns,
         )
         .await
         .map_err(AppError::Internal)?;
@@ -192,6 +199,12 @@ fn generate_streaming_response(
 
         let model_name = request.model.clone();
 
+        // Extract max_turns from headers
+        let max_turns = claude_headers
+            .get("max_turns")
+            .and_then(|v| v.as_u64())
+            .map(|v| v as u32);
+
         // Start streaming
         let rx = match state.claude_cli.run_completion_stream(
             &prompt,
@@ -200,6 +213,7 @@ fn generate_streaming_response(
             allowed.as_deref(),
             disallowed.as_deref(),
             permission_mode.as_deref(),
+            max_turns,
         ).await {
             Ok(rx) => rx,
             Err(e) => {

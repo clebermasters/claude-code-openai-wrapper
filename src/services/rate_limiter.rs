@@ -82,6 +82,8 @@ mod tests {
             rate_limit_auth_per_minute: 10,
             rate_limit_session_per_minute: 15,
             rate_limit_health_per_minute: 30,
+            cli_max_output_tokens: 0,
+            cli_max_turns: 0,
         }
     }
 

@@ -100,6 +100,7 @@ impl ClaudeCli {
         disallowed_tools: Option<&[String]>,
         permission_mode: Option<&str>,
         stream_json: bool,
+        max_turns: Option<u32>,
     ) -> Vec<String> {
         let mut args = vec![
             "--print".to_string(),
@@ -115,6 +116,13 @@ impl ClaudeCli {
         if let Some(m) = model {
             args.push("--model".to_string());
             args.push(m.to_string());
+        }
+
+        // --max-turns: per-request override > config > unlimited
+        let turns = max_turns.unwrap_or(self.config.cli_max_turns);
+        if turns > 0 {
+            args.push("--max-turns".to_string());
+            args.push(turns.to_string());
         }
 
         if let Some(sp) = system_prompt {
@@ -167,10 +175,11 @@ impl ClaudeCli {
         allowed_tools: Option<&[String]>,
         disallowed_tools: Option<&[String]>,
         permission_mode: Option<&str>,
+        max_turns: Option<u32>,
     ) -> Result<CompletionResult, String> {
         let args = self.build_args(
             prompt, system_prompt, model,
-            allowed_tools, disallowed_tools, permission_mode, false,
+            allowed_tools, disallowed_tools, permission_mode, false, max_turns,
         );
 
         debug!("Running claude CLI with args: {:?}", args);
@@ -225,10 +234,11 @@ impl ClaudeCli {
         allowed_tools: Option<&[String]>,
         disallowed_tools: Option<&[String]>,
         permission_mode: Option<&str>,
+        max_turns: Option<u32>,
     ) -> Result<tokio::sync::mpsc::Receiver<StreamEvent>, String> {
         let args = self.build_args(
             prompt, system_prompt, model,
-            allowed_tools, disallowed_tools, permission_mode, true,
+            allowed_tools, disallowed_tools, permission_mode, true, max_turns,
         );
 
         debug!("Running claude CLI (streaming) with args: {:?}", args);
@@ -662,7 +672,7 @@ mod tests {
     #[test]
     fn test_build_args_basic() {
         let cli = make_cli();
-        let args = cli.build_args("hello", None, Some("opus"), None, None, None, false);
+        let args = cli.build_args("hello", None, Some("opus"), None, None, None, false, None);
         assert!(args.contains(&"--print".to_string()));
         assert!(args.contains(&"json".to_string()));
         assert!(args.contains(&"--model".to_string()));
@@ -674,7 +684,7 @@ mod tests {
     #[test]
     fn test_build_args_stream_json() {
         let cli = make_cli();
-        let args = cli.build_args("hello", None, None, None, None, None, true);
+        let args = cli.build_args("hello", None, None, None, None, None, true, None);
         assert!(args.contains(&"stream-json".to_string()));
         assert!(args.contains(&"--verbose".to_string()));
     }
@@ -682,7 +692,7 @@ mod tests {
     #[test]
     fn test_build_args_system_prompt() {
         let cli = make_cli();
-        let args = cli.build_args("hello", Some("be helpful"), None, None, None, None, false);
+        let args = cli.build_args("hello", Some("be helpful"), None, None, None, None, false, None);
         let idx = args.iter().position(|a| a == "--system-prompt").unwrap();
         assert_eq!(args[idx + 1], "be helpful");
     }
@@ -691,7 +701,7 @@ mod tests {
     fn test_build_args_allowed_tools() {
         let cli = make_cli();
         let tools = vec!["Read".into(), "Write".into()];
-        let args = cli.build_args("hello", None, None, Some(&tools), None, None, false);
+        let args = cli.build_args("hello", None, None, Some(&tools), None, None, false, None);
         assert!(args.contains(&"--allowedTools".to_string()));
         assert!(args.contains(&"Read,Write".to_string()));
     }
@@ -699,7 +709,7 @@ mod tests {
     #[test]
     fn test_build_args_permission_mode() {
         let cli = make_cli();
-        let args = cli.build_args("hello", None, None, None, None, Some("bypassPermissions"), false);
+        let args = cli.build_args("hello", None, None, None, None, Some("bypassPermissions"), false, None);
         assert!(args.contains(&"--permission-mode".to_string()));
         assert!(args.contains(&"bypassPermissions".to_string()));
     }
@@ -708,7 +718,7 @@ mod tests {
     fn test_build_args_all_tools_disabled_skips_flag() {
         let cli = make_cli();
         let all: Vec<String> = crate::constants::CLAUDE_TOOLS.iter().map(|s| s.to_string()).collect();
-        let args = cli.build_args("hello", None, None, None, Some(&all), None, false);
+        let args = cli.build_args("hello", None, None, None, Some(&all), None, false, None);
         // Should NOT contain --disallowedTools or --tools when all disabled
         assert!(!args.contains(&"--disallowedTools".to_string()));
         assert!(!args.contains(&"--tools".to_string()));
@@ -718,8 +728,23 @@ mod tests {
     fn test_build_args_partial_disallowed() {
         let cli = make_cli();
         let tools = vec!["Task".into(), "WebFetch".into()];
-        let args = cli.build_args("hello", None, None, None, Some(&tools), None, false);
+        let args = cli.build_args("hello", None, None, None, Some(&tools), None, false, None);
         assert!(args.contains(&"--disallowedTools".to_string()));
         assert!(args.contains(&"Task,WebFetch".to_string()));
+    }
+
+    #[test]
+    fn test_build_args_max_turns() {
+        let cli = make_cli();
+        let args = cli.build_args("hello", None, None, None, None, None, false, Some(5));
+        assert!(args.contains(&"--max-turns".to_string()));
+        assert!(args.contains(&"5".to_string()));
+    }
+
+    #[test]
+    fn test_build_args_max_turns_zero_omitted() {
+        let cli = make_cli();
+        let args = cli.build_args("hello", None, None, None, None, None, false, Some(0));
+        assert!(!args.contains(&"--max-turns".to_string()));
     }
 }
