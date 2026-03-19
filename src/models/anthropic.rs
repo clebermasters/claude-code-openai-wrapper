@@ -72,6 +72,7 @@ impl AnthropicMessagesRequest {
                     role: msg.role.clone(),
                     content,
                     name: None,
+                    thinking: None,
                 }
             })
             .collect()

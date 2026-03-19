@@ -2,7 +2,7 @@
   <img src="https://img.shields.io/badge/Rust-000000?style=for-the-badge&logo=rust&logoColor=white" alt="Rust">
   <img src="https://img.shields.io/badge/Axum-0.8-blue?style=for-the-badge" alt="Axum 0.8">
   <img src="https://img.shields.io/badge/version-2.2.0-green?style=for-the-badge" alt="Version 2.2.0">
-  <img src="https://img.shields.io/badge/tests-152_passing-brightgreen?style=for-the-badge" alt="152 Tests Passing">
+  <img src="https://img.shields.io/badge/tests-167_passing-brightgreen?style=for-the-badge" alt="167 Tests Passing">
   <img src="https://img.shields.io/badge/binary-4.7MB-orange?style=for-the-badge" alt="4.7MB Binary">
 </p>
 
@@ -30,6 +30,7 @@ You already have tools that talk to OpenAI — editors, scripts, agents, CI pipe
 | **OpenAI SDK compatibility** | Same `/v1/chat/completions` contract |
 | **Anthropic SDK compatibility** | Native `/v1/messages` endpoint too |
 | **Streaming SSE** | Real-time `text/event-stream` chunks |
+| **Extended thinking** | Surface Claude's reasoning via `include_thinking` |
 | **Session memory** | Multi-turn conversations via `session_id` |
 | **Multi-provider auth** | CLI, API key, Bedrock, Vertex AI |
 | **4.7 MB binary** | Rust + static linking, no Python/Node runtime |
@@ -203,6 +204,39 @@ curl -X POST http://localhost:8000/v1/chat/completions \
   -d '{"model":"claude-opus-4-6","messages":[{"role":"user","content":"List files in /tmp"}],"enable_tools":true}'
 ```
 
+### Extended Thinking
+
+Surface Claude's internal reasoning process alongside the final answer. Enable via request body or header:
+
+```bash
+# Via request body
+curl -X POST http://localhost:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"claude-sonnet-4-5-20250929","include_thinking":true,"messages":[{"role":"user","content":"What is 15% of 240?"}]}'
+
+# Via header
+curl -X POST http://localhost:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "X-Claude-Include-Thinking: true" \
+  -d '{"model":"claude-sonnet-4-5-20250929","messages":[{"role":"user","content":"What is 15% of 240?"}]}'
+```
+
+Response includes a `thinking` field on the message:
+
+```json
+{
+  "choices": [{
+    "message": {
+      "role": "assistant",
+      "content": "15% of 240 = 36",
+      "thinking": "The user is asking me to calculate 15% of 240..."
+    }
+  }]
+}
+```
+
+When disabled (default), the `thinking` field is omitted entirely — fully backwards-compatible. Streaming also supports thinking via `{"delta": {"thinking": "..."}}` chunks.
+
 ---
 
 ## API Endpoints
@@ -261,12 +295,22 @@ All configuration via environment variables (or `.env` file):
 | `ANTHROPIC_API_KEY` | — | Direct API key |
 | `API_KEY` | — | Protect wrapper endpoints with Bearer token |
 | `DEFAULT_MODEL` | `claude-sonnet-4-5-20250929` | Default model |
-| `MAX_TIMEOUT` | `600000` | Request timeout (ms) |
+| `MAX_TIMEOUT` | `600000` | Wrapper-side request timeout (ms) |
 | `MAX_REQUEST_SIZE` | `10485760` | Max body size (bytes) |
 | `CORS_ORIGINS` | `["*"]` | CORS allowed origins (JSON array) |
 | `DEBUG_MODE` | `false` | Enable debug logging |
 | `RATE_LIMIT_ENABLED` | `true` | Enable per-endpoint rate limiting |
 | `RATE_LIMIT_CHAT_PER_MINUTE` | `10` | Chat endpoint rate limit |
+
+**CLI subprocess configuration** (forwarded to the `claude` CLI process):
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CLAUDE_CODE_MAX_OUTPUT_TOKENS` | model default | Max output tokens for CLI responses |
+| `BASH_DEFAULT_TIMEOUT_MS` | `120000` | CLI bash tool default timeout |
+| `BASH_MAX_TIMEOUT_MS` | `600000` | CLI bash tool hard ceiling (max 600s) |
+| `MAX_THINKING_TOKENS` | model default | Extended thinking token budget |
+| `CLAUDE_CLI_MAX_TURNS` | `0` (unlimited) | Max agent turns per request |
 
 ### Authentication Providers
 
@@ -289,23 +333,28 @@ Pass Claude-specific options via HTTP headers:
 
 | Header | Example | Description |
 |--------|---------|-------------|
+| `X-Claude-Model` | `claude-opus-4-6` | Override model per-request |
+| `X-Claude-Max-Turns` | `20` | Max agent turns for this request |
+| `X-Claude-Max-Thinking-Tokens` | `10000` | Extended thinking token budget |
+| `X-Claude-Include-Thinking` | `true` | Return thinking in response |
 | `X-Claude-Allowed-Tools` | `Read,Write,Bash` | Override allowed tools |
 | `X-Claude-Disallowed-Tools` | `WebFetch,WebSearch` | Override disallowed tools |
 | `X-Claude-Permission-Mode` | `bypassPermissions` | Permission mode |
-| `X-Claude-Max-Thinking-Tokens` | `10000` | Limit thinking tokens |
 
 ---
 
 ## Supported Models
 
-| Model | Alias | Notes |
-|-------|-------|-------|
-| `claude-opus-4-5-20250929` | `opus` | Most capable |
-| `claude-sonnet-4-5-20250929` | `sonnet` | Best coding model |
-| `claude-haiku-4-5-20251001` | `haiku` | Fast & cost-effective |
-| `claude-opus-4-1-20250805` | — | Upgraded Opus 4 |
-| `claude-opus-4-20250514` | — | Original Opus 4 |
-| `claude-sonnet-4-20250514` | — | Original Sonnet 4 |
+| Model | Notes |
+|-------|-------|
+| `claude-opus-4-6` | Most intelligent — agents & deep reasoning |
+| `claude-sonnet-4-6` | Best coding model |
+| `claude-opus-4-5-20250929` | Premium intelligence + performance |
+| `claude-sonnet-4-5-20250929` | Real-world agents & coding |
+| `claude-haiku-4-5-20251001` | Fast & cost-effective |
+| `claude-opus-4-1-20250805` | Upgraded Opus 4 |
+| `claude-opus-4-20250514` | Original Opus 4 |
+| `claude-sonnet-4-20250514` | Original Sonnet 4 |
 
 > Aliases like `opus`, `sonnet`, `haiku` are resolved by the `claude` CLI.
 
@@ -347,11 +396,11 @@ src/
 
 ```bash
 cargo test
-# running 152 tests
-# test result: ok. 152 passed; 0 failed
+# running 167 tests
+# test result: ok. 167 passed; 0 failed
 ```
 
-**152 unit tests** across 14 modules covering models, services, auth, sessions, CLI parsing, content filtering, and rate limiting.
+**167 unit tests** across 14 modules covering models, services, auth, sessions, CLI parsing, content filtering, thinking extraction, and rate limiting.
 
 ---
 

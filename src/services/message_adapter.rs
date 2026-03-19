@@ -48,6 +48,7 @@ mod tests {
             role: "user".to_string(),
             content: "Hello".to_string(),
             name: None,
+            thinking: None,
         }];
         let (prompt, system) = messages_to_prompt(&messages);
         assert_eq!(prompt, "Human: Hello");
@@ -61,11 +62,13 @@ mod tests {
                 role: "system".to_string(),
                 content: "You are helpful.".to_string(),
                 name: None,
+                thinking: None,
             },
             Message {
                 role: "user".to_string(),
                 content: "Hello".to_string(),
                 name: None,
+                thinking: None,
             },
         ];
         let (prompt, system) = messages_to_prompt(&messages);
@@ -79,6 +82,7 @@ mod tests {
             role: "assistant".to_string(),
             content: "Hi".to_string(),
             name: None,
+            thinking: None,
         }];
         let (prompt, _) = messages_to_prompt(&messages);
         assert!(prompt.contains("Please continue."));

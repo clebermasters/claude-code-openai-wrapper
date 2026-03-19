@@ -170,6 +170,7 @@ PORT=8000
 # MAX_REQUEST_SIZE=10485760
 
 # ─── Timeouts ─────────────────────────────────────────────────────────────────
+# Wrapper-side timeout for waiting on CLI response (default: 600000 = 10 min)
 MAX_TIMEOUT=600000
 
 # ─── CORS ─────────────────────────────────────────────────────────────────────
@@ -177,6 +178,14 @@ CORS_ORIGINS=["*"]
 
 # ─── Model ────────────────────────────────────────────────────────────────────
 DEFAULT_MODEL=claude-sonnet-4-5-20250929
+
+# ─── Claude CLI Subprocess ────────────────────────────────────────────────────
+# These env vars are forwarded to the Claude CLI process
+# CLAUDE_CODE_MAX_OUTPUT_TOKENS=128000
+# BASH_DEFAULT_TIMEOUT_MS=120000
+# BASH_MAX_TIMEOUT_MS=600000
+# MAX_THINKING_TOKENS=32000
+# CLAUDE_CLI_MAX_TURNS=0
 
 # ─── Rate Limiting ────────────────────────────────────────────────────────────
 RATE_LIMIT_ENABLED=true

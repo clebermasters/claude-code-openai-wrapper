@@ -167,6 +167,8 @@ impl ClaudeCli {
     }
 
     /// Non-streaming completion: run CLI and return the full response text.
+    /// When `include_thinking` is true, uses stream-json internally to capture
+    /// thinking blocks (the json format strips them).
     pub async fn run_completion(
         &self,
         prompt: &str,
@@ -176,7 +178,18 @@ impl ClaudeCli {
         disallowed_tools: Option<&[String]>,
         permission_mode: Option<&str>,
         max_turns: Option<u32>,
+        include_thinking: bool,
     ) -> Result<CompletionResult, String> {
+        // When thinking is requested, use stream-json internally because
+        // the json output format flattens everything into a "result" string
+        // and drops thinking blocks entirely.
+        if include_thinking {
+            return self.run_completion_with_thinking(
+                prompt, system_prompt, model,
+                allowed_tools, disallowed_tools, permission_mode, max_turns,
+            ).await;
+        }
+
         let args = self.build_args(
             prompt, system_prompt, model,
             allowed_tools, disallowed_tools, permission_mode, false, max_turns,
@@ -221,7 +234,50 @@ impl ClaudeCli {
 
         Ok(CompletionResult {
             text: text.unwrap_or_default(),
+            thinking: None,
             metadata,
+        })
+    }
+
+    /// Run completion using stream-json internally to capture thinking blocks,
+    /// then reassemble into a single CompletionResult.
+    async fn run_completion_with_thinking(
+        &self,
+        prompt: &str,
+        system_prompt: Option<&str>,
+        model: Option<&str>,
+        allowed_tools: Option<&[String]>,
+        disallowed_tools: Option<&[String]>,
+        permission_mode: Option<&str>,
+        max_turns: Option<u32>,
+    ) -> Result<CompletionResult, String> {
+        let mut rx = self.run_completion_stream(
+            prompt, system_prompt, model,
+            allowed_tools, disallowed_tools, permission_mode, max_turns,
+        ).await?;
+
+        let mut text_parts = Vec::new();
+        let mut thinking_parts = Vec::new();
+
+        while let Some(event) = rx.recv().await {
+            match event {
+                StreamEvent::AssistantText(t) => text_parts.push(t),
+                StreamEvent::Thinking(t) => thinking_parts.push(t),
+                StreamEvent::Result(t) => {
+                    if text_parts.is_empty() {
+                        text_parts.push(t);
+                    }
+                }
+                StreamEvent::Error(e) => return Err(e),
+                StreamEvent::Done => break,
+                _ => {}
+            }
+        }
+
+        Ok(CompletionResult {
+            text: text_parts.join(""),
+            thinking: if thinking_parts.is_empty() { None } else { Some(thinking_parts.join("\n")) },
+            metadata: CompletionMetadata::default(),
         })
     }
 
@@ -275,9 +331,11 @@ impl ClaudeCli {
 
                         match serde_json::from_str::<serde_json::Value>(&line) {
                             Ok(json) => {
-                                let event = parse_stream_event(&json);
-                                if tx.send(event).await.is_err() {
-                                    break; // Receiver dropped
+                                let events = parse_stream_event(&json);
+                                for event in events {
+                                    if tx.send(event).await.is_err() {
+                                        break;
+                                    }
                                 }
                             }
                             Err(e) => {
@@ -363,6 +421,35 @@ impl ClaudeCli {
         last_text
     }
 
+    /// Extract thinking text from CLI output (mirrors extract_result_text but for thinking blocks).
+    fn extract_thinking_text(&self, output: &str) -> Option<String> {
+        // Single JSON object
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(output) {
+            if let Some(thinking) = extract_thinking_from_content(json.get("content")) {
+                return Some(thinking);
+            }
+        }
+
+        // NDJSON: scan for assistant messages with thinking blocks
+        let mut last_thinking = None;
+        for line in output.lines() {
+            if let Ok(json) = serde_json::from_str::<serde_json::Value>(line.trim()) {
+                if json.get("type").and_then(|t| t.as_str()) == Some("assistant") {
+                    if let Some(msg) = json.get("message") {
+                        if let Some(thinking) = extract_thinking_from_content(msg.get("content")) {
+                            last_thinking = Some(thinking);
+                        }
+                    }
+                }
+                if let Some(thinking) = extract_thinking_from_content(json.get("content")) {
+                    last_thinking = Some(thinking);
+                }
+            }
+        }
+
+        last_thinking
+    }
+
     fn extract_metadata_from_output(&self, output: &str) -> CompletionMetadata {
         let mut metadata = CompletionMetadata::default();
 
@@ -406,6 +493,7 @@ pub struct CompletionMetadata {
 #[derive(Debug, Clone)]
 pub struct CompletionResult {
     pub text: String,
+    pub thinking: Option<String>,
     pub metadata: CompletionMetadata,
 }
 
@@ -413,6 +501,7 @@ pub struct CompletionResult {
 pub enum StreamEvent {
     Text(String),
     AssistantText(String),
+    Thinking(String),
     Result(String),
     Error(String),
     Done,
@@ -438,26 +527,60 @@ fn extract_text_from_content(content: Option<&serde_json::Value>) -> Option<Stri
     }
 }
 
-fn parse_stream_event(json: &serde_json::Value) -> StreamEvent {
+/// Extract thinking text from a content array (handles [{"type":"thinking","thinking":"..."},...])
+fn extract_thinking_from_content(content: Option<&serde_json::Value>) -> Option<String> {
+    let arr = content?.as_array()?;
+    let thoughts: Vec<&str> = arr
+        .iter()
+        .filter_map(|block| {
+            if block.get("type").and_then(|t| t.as_str()) == Some("thinking") {
+                block.get("thinking").and_then(|t| t.as_str())
+            } else {
+                None
+            }
+        })
+        .collect();
+    if thoughts.is_empty() {
+        None
+    } else {
+        Some(thoughts.join("\n"))
+    }
+}
+
+fn parse_stream_event(json: &serde_json::Value) -> Vec<StreamEvent> {
+    let mut events = Vec::new();
+
     // ResultMessage with result text
     if json.get("subtype").and_then(|s| s.as_str()) == Some("success") {
         if let Some(result) = json.get("result").and_then(|r| r.as_str()) {
-            return StreamEvent::Result(result.to_string());
+            return vec![StreamEvent::Result(result.to_string())];
         }
     }
 
     // AssistantMessage: {"type":"assistant","message":{"content":[...]}}
     if json.get("type").and_then(|t| t.as_str()) == Some("assistant") {
         if let Some(msg) = json.get("message") {
+            if let Some(thinking) = extract_thinking_from_content(msg.get("content")) {
+                events.push(StreamEvent::Thinking(thinking));
+            }
             if let Some(text) = extract_text_from_content(msg.get("content")) {
-                return StreamEvent::AssistantText(text);
+                events.push(StreamEvent::AssistantText(text));
+            }
+            if !events.is_empty() {
+                return events;
             }
         }
     }
 
     // Direct content array fallback
+    if let Some(thinking) = extract_thinking_from_content(json.get("content")) {
+        events.push(StreamEvent::Thinking(thinking));
+    }
     if let Some(text) = extract_text_from_content(json.get("content")) {
-        return StreamEvent::AssistantText(text);
+        events.push(StreamEvent::AssistantText(text));
+    }
+    if !events.is_empty() {
+        return events;
     }
 
     // Error in result
@@ -467,11 +590,11 @@ fn parse_stream_event(json: &serde_json::Value) -> StreamEvent {
             .or_else(|| json.get("error"))
             .and_then(|v| v.as_str())
             .unwrap_or("Unknown error");
-        return StreamEvent::Error(msg.to_string());
+        return vec![StreamEvent::Error(msg.to_string())];
     }
 
     // Default: skip system/rate_limit messages
-    StreamEvent::Text(String::new())
+    vec![StreamEvent::Text(String::new())]
 }
 
 #[cfg(test)]
@@ -513,12 +636,68 @@ mod tests {
         assert!(extract_text_from_content(Some(&val)).is_none());
     }
 
+    // --- extract_thinking_from_content ---
+
+    #[test]
+    fn test_extract_thinking_none() {
+        assert!(extract_thinking_from_content(None).is_none());
+    }
+
+    #[test]
+    fn test_extract_thinking_no_thinking_blocks() {
+        let val = serde_json::json!([{"type": "text", "text": "hello"}]);
+        assert!(extract_thinking_from_content(Some(&val)).is_none());
+    }
+
+    #[test]
+    fn test_extract_thinking_single_block() {
+        let val = serde_json::json!([
+            {"type": "thinking", "thinking": "Let me reason about this..."},
+            {"type": "text", "text": "answer"}
+        ]);
+        assert_eq!(
+            extract_thinking_from_content(Some(&val)).unwrap(),
+            "Let me reason about this..."
+        );
+    }
+
+    #[test]
+    fn test_extract_thinking_multiple_blocks() {
+        let val = serde_json::json!([
+            {"type": "thinking", "thinking": "Step 1"},
+            {"type": "thinking", "thinking": "Step 2"},
+            {"type": "text", "text": "answer"}
+        ]);
+        assert_eq!(
+            extract_thinking_from_content(Some(&val)).unwrap(),
+            "Step 1\nStep 2"
+        );
+    }
+
+    // --- extract_thinking_text (NDJSON) ---
+
+    #[test]
+    fn test_extract_thinking_text_ndjson() {
+        let cli = make_cli();
+        let output = r#"{"type":"assistant","message":{"content":[{"type":"thinking","thinking":"reasoning here"},{"type":"text","text":"answer"}]}}"#;
+        assert_eq!(cli.extract_thinking_text(output).unwrap(), "reasoning here");
+    }
+
+    #[test]
+    fn test_extract_thinking_text_no_thinking() {
+        let cli = make_cli();
+        let output = r#"{"type":"assistant","message":{"content":[{"type":"text","text":"just text"}]}}"#;
+        assert!(cli.extract_thinking_text(output).is_none());
+    }
+
     // --- parse_stream_event ---
 
     #[test]
     fn test_parse_stream_event_result() {
         let json = serde_json::json!({"subtype": "success", "result": "answer"});
-        match parse_stream_event(&json) {
+        let events = parse_stream_event(&json);
+        assert_eq!(events.len(), 1);
+        match &events[0] {
             StreamEvent::Result(text) => assert_eq!(text, "answer"),
             other => panic!("Expected Result, got {:?}", other),
         }
@@ -530,8 +709,31 @@ mod tests {
             "type": "assistant",
             "message": {"content": [{"type": "text", "text": "hi there"}]}
         });
-        match parse_stream_event(&json) {
+        let events = parse_stream_event(&json);
+        assert_eq!(events.len(), 1);
+        match &events[0] {
             StreamEvent::AssistantText(text) => assert_eq!(text, "hi there"),
+            other => panic!("Expected AssistantText, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_stream_event_assistant_with_thinking() {
+        let json = serde_json::json!({
+            "type": "assistant",
+            "message": {"content": [
+                {"type": "thinking", "thinking": "Let me think about this..."},
+                {"type": "text", "text": "The answer is 42."}
+            ]}
+        });
+        let events = parse_stream_event(&json);
+        assert_eq!(events.len(), 2);
+        match &events[0] {
+            StreamEvent::Thinking(t) => assert_eq!(t, "Let me think about this..."),
+            other => panic!("Expected Thinking, got {:?}", other),
+        }
+        match &events[1] {
+            StreamEvent::AssistantText(t) => assert_eq!(t, "The answer is 42."),
             other => panic!("Expected AssistantText, got {:?}", other),
         }
     }
@@ -539,7 +741,9 @@ mod tests {
     #[test]
     fn test_parse_stream_event_direct_content() {
         let json = serde_json::json!({"content": [{"type": "text", "text": "direct"}]});
-        match parse_stream_event(&json) {
+        let events = parse_stream_event(&json);
+        assert_eq!(events.len(), 1);
+        match &events[0] {
             StreamEvent::AssistantText(text) => assert_eq!(text, "direct"),
             other => panic!("Expected AssistantText, got {:?}", other),
         }
@@ -548,7 +752,9 @@ mod tests {
     #[test]
     fn test_parse_stream_event_error() {
         let json = serde_json::json!({"is_error": true, "result": "something broke"});
-        match parse_stream_event(&json) {
+        let events = parse_stream_event(&json);
+        assert_eq!(events.len(), 1);
+        match &events[0] {
             StreamEvent::Error(msg) => assert_eq!(msg, "something broke"),
             other => panic!("Expected Error, got {:?}", other),
         }
@@ -557,7 +763,9 @@ mod tests {
     #[test]
     fn test_parse_stream_event_error_fallback() {
         let json = serde_json::json!({"is_error": true, "error_message": "fail"});
-        match parse_stream_event(&json) {
+        let events = parse_stream_event(&json);
+        assert_eq!(events.len(), 1);
+        match &events[0] {
             StreamEvent::Error(msg) => assert_eq!(msg, "fail"),
             other => panic!("Expected Error, got {:?}", other),
         }
@@ -566,7 +774,9 @@ mod tests {
     #[test]
     fn test_parse_stream_event_system_ignored() {
         let json = serde_json::json!({"type": "system", "subtype": "init"});
-        match parse_stream_event(&json) {
+        let events = parse_stream_event(&json);
+        assert_eq!(events.len(), 1);
+        match &events[0] {
             StreamEvent::Text(t) => assert!(t.is_empty()),
             other => panic!("Expected empty Text, got {:?}", other),
         }

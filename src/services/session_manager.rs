@@ -222,7 +222,7 @@ mod tests {
     use super::*;
 
     fn msg(role: &str, content: &str) -> Message {
-        Message { role: role.into(), content: content.into(), name: None }
+        Message { role: role.into(), content: content.into(), name: None, thinking: None }
     }
 
     #[test]

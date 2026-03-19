@@ -69,6 +69,11 @@ impl ParameterValidator {
             }
         }
 
+        if let Some(val) = headers.get("x-claude-include-thinking").and_then(|v| v.to_str().ok()) {
+            let include = matches!(val.to_lowercase().as_str(), "true" | "1" | "yes");
+            options.insert("include_thinking".to_string(), serde_json::json!(include));
+        }
+
         options
     }
 }
@@ -202,6 +207,22 @@ mod tests {
         headers.insert("x-claude-max-turns", "abc".parse().unwrap());
         let opts = ParameterValidator::extract_claude_headers(&headers);
         assert!(!opts.contains_key("max_turns"));
+    }
+
+    #[test]
+    fn test_extract_claude_headers_include_thinking_true() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("x-claude-include-thinking", "true".parse().unwrap());
+        let opts = ParameterValidator::extract_claude_headers(&headers);
+        assert_eq!(opts["include_thinking"], true);
+    }
+
+    #[test]
+    fn test_extract_claude_headers_include_thinking_false() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("x-claude-include-thinking", "false".parse().unwrap());
+        let opts = ParameterValidator::extract_claude_headers(&headers);
+        assert_eq!(opts["include_thinking"], false);
     }
 
     #[test]

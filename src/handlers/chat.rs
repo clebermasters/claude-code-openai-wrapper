@@ -98,11 +98,17 @@ async fn generate_non_streaming_response(
         .map(String::from)
         .unwrap_or_else(|| request.model.clone());
 
-    // Extract max_turns from headers
+    // Extract max_turns and include_thinking from headers/request
     let max_turns = claude_headers
         .get("max_turns")
         .and_then(|v| v.as_u64())
         .map(|v| v as u32);
+
+    let include_thinking = claude_headers
+        .get("include_thinking")
+        .and_then(|v| v.as_bool())
+        .or(request.include_thinking)
+        .unwrap_or(false);
 
     // Run Claude CLI
     let result = state
@@ -115,6 +121,7 @@ async fn generate_non_streaming_response(
             disallowed.as_deref(),
             permission_mode.as_deref(),
             max_turns,
+            include_thinking,
         )
         .await
         .map_err(AppError::Internal)?;
@@ -132,6 +139,7 @@ async fn generate_non_streaming_response(
             role: "assistant".to_string(),
             content: assistant_content.clone(),
             name: None,
+            thinking: None,
         };
         state.session_manager.add_assistant_response(sid, msg).await;
     }
@@ -139,6 +147,13 @@ async fn generate_non_streaming_response(
     // Estimate tokens
     let prompt_tokens = message_adapter::estimate_tokens(&prompt);
     let completion_tokens = message_adapter::estimate_tokens(&assistant_content);
+
+    // Include thinking if requested and available
+    let thinking = if include_thinking {
+        result.thinking.clone()
+    } else {
+        None
+    };
 
     Ok(ChatCompletionResponse {
         id: request_id.to_string(),
@@ -151,6 +166,7 @@ async fn generate_non_streaming_response(
                 role: "assistant".to_string(),
                 content: assistant_content,
                 name: None,
+                thinking,
             },
             finish_reason: Some("stop".to_string()),
         }],
@@ -199,11 +215,17 @@ fn generate_streaming_response(
 
         let model_name = request.model.clone();
 
-        // Extract max_turns from headers
+        // Extract max_turns and include_thinking from headers/request
         let max_turns = claude_headers
             .get("max_turns")
             .and_then(|v| v.as_u64())
             .map(|v| v as u32);
+
+        let include_thinking = claude_headers
+            .get("include_thinking")
+            .and_then(|v| v.as_bool())
+            .or(request.include_thinking)
+            .unwrap_or(false);
 
         // Start streaming
         let rx = match state.claude_cli.run_completion_stream(
@@ -287,6 +309,17 @@ fn generate_streaming_response(
                         full_text.push_str(&filtered);
                     }
                 }
+                crate::services::claude_cli::StreamEvent::Thinking(thinking) => {
+                    if include_thinking && !thinking.is_empty() {
+                        let chunk = ChatCompletionStreamResponse::new(
+                            &request_id, &model_name,
+                            serde_json::json!({"thinking": thinking}),
+                            None,
+                        );
+                        let data = serde_json::to_string(&chunk).unwrap();
+                        yield Ok(Event::default().data(data));
+                    }
+                }
                 crate::services::claude_cli::StreamEvent::Error(msg) => {
                     error!("Stream error: {msg}");
                     let error_data = serde_json::json!({"error": {"message": msg, "type": "streaming_error"}});
@@ -324,6 +357,7 @@ fn generate_streaming_response(
                     role: "assistant".to_string(),
                     content: full_text.clone(),
                     name: None,
+                    thinking: None,
                 };
                 state.session_manager.add_assistant_response(sid, msg).await;
             }

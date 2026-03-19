@@ -61,6 +61,9 @@ pub struct Message {
     pub content: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    /// Claude's extended thinking output (only present when include_thinking is enabled)
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub thinking: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -96,6 +99,9 @@ pub struct ChatCompletionRequest {
     #[serde(default)]
     pub enable_tools: Option<bool>,
     pub stream_options: Option<StreamOptions>,
+    /// Include Claude's thinking/reasoning in the response
+    #[serde(default)]
+    pub include_thinking: Option<bool>,
 }
 
 fn default_model() -> String {
@@ -231,6 +237,7 @@ impl ChatCompletionResponse {
                     role: "assistant".to_string(),
                     content,
                     name: None,
+                    thinking: None,
                 },
                 finish_reason: Some("stop".to_string()),
             }],
@@ -445,6 +452,42 @@ mod tests {
         assert!(req.tools_enabled());
     }
 
+    #[test]
+    fn test_include_thinking_default_none() {
+        let req = make_request(r#"{"messages":[{"role":"user","content":"hi"}]}"#);
+        assert!(req.include_thinking.is_none());
+    }
+
+    #[test]
+    fn test_include_thinking_true() {
+        let req = make_request(r#"{"messages":[{"role":"user","content":"hi"}],"include_thinking":true}"#);
+        assert_eq!(req.include_thinking, Some(true));
+    }
+
+    #[test]
+    fn test_message_thinking_serialization() {
+        let msg = Message {
+            role: "assistant".to_string(),
+            content: "answer".to_string(),
+            name: None,
+            thinking: Some("reasoning".to_string()),
+        };
+        let json = serde_json::to_value(&msg).unwrap();
+        assert_eq!(json["thinking"], "reasoning");
+    }
+
+    #[test]
+    fn test_message_thinking_omitted_when_none() {
+        let msg = Message {
+            role: "assistant".to_string(),
+            content: "answer".to_string(),
+            name: None,
+            thinking: None,
+        };
+        let json = serde_json::to_value(&msg).unwrap();
+        assert!(json.get("thinking").is_none());
+    }
+
     // --- Response constructors ---
 
     #[test]
@@ -458,6 +501,7 @@ mod tests {
         assert_eq!(resp.choices[0].message.content, "hello");
         assert_eq!(resp.choices[0].finish_reason, Some("stop".to_string()));
         assert!(resp.usage.is_none());
+        assert!(resp.choices[0].message.thinking.is_none());
     }
 
     #[test]

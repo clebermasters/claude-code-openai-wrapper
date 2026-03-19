@@ -194,23 +194,51 @@ To receive token usage in the final stream chunk, add `stream_options`:
 
 ## Extended Thinking
 
-Control Opus 4.6's reasoning depth with the `X-Claude-Max-Thinking-Tokens` header. This allocates a token budget for the model's internal reasoning before it produces the final answer.
+Claude can show its internal reasoning process before producing a final answer. To surface this, set `include_thinking` in the request body or via the `X-Claude-Include-Thinking` header.
+
+### Enabling Thinking
 
 ```bash
+# Via request body
 curl http://localhost:8000/v1/chat/completions \
   -H "content-type: application/json" \
-  -H "Authorization: Bearer YOUR_API_KEY" \
-  -H "X-Claude-Max-Thinking-Tokens: 10000" \
   -d '{
     "model": "claude-opus-4-6",
     "max_tokens": 16000,
+    "include_thinking": true,
     "messages": [
       {"role": "user", "content": "Design a rate limiter supporting fixed-window and sliding-window. Compare the trade-offs."}
     ]
   }'
+
+# Via header
+curl http://localhost:8000/v1/chat/completions \
+  -H "content-type: application/json" \
+  -H "X-Claude-Include-Thinking: true" \
+  -d '{
+    "model": "claude-opus-4-6",
+    "max_tokens": 16000,
+    "messages": [
+      {"role": "user", "content": "Design a rate limiter supporting fixed-window and sliding-window."}
+    ]
+  }'
 ```
 
-In Python, pass the header via `extra_headers`:
+The response includes a `thinking` field on the message object:
+
+```json
+{
+  "choices": [{
+    "message": {
+      "role": "assistant",
+      "content": "Here is a comparison of fixed-window vs sliding-window rate limiters...",
+      "thinking": "The user wants me to design a rate limiter. Let me think about the two approaches..."
+    }
+  }]
+}
+```
+
+### Python
 
 ```python
 response = client.chat.completions.create(
@@ -219,12 +247,44 @@ response = client.chat.completions.create(
     messages=[
         {"role": "user", "content": "Design a rate limiter supporting fixed-window and sliding-window."},
     ],
-    extra_headers={
-        "X-Claude-Max-Thinking-Tokens": "10000",
-    },
+    extra_body={"include_thinking": True},
 )
+print("=== Thinking ===")
+print(response.choices[0].message.thinking)
+print("=== Answer ===")
 print(response.choices[0].message.content)
 ```
+
+### Controlling Thinking Depth
+
+Use `X-Claude-Max-Thinking-Tokens` to set the token budget for reasoning:
+
+```python
+response = client.chat.completions.create(
+    model="claude-opus-4-6",
+    max_tokens=16000,
+    messages=[...],
+    extra_body={"include_thinking": True},
+    extra_headers={"X-Claude-Max-Thinking-Tokens": "10000"},
+)
+```
+
+You can also set `MAX_THINKING_TOKENS` as an environment variable in the wrapper config for a global default.
+
+### Streaming with Thinking
+
+When streaming with thinking enabled, thinking arrives as a separate delta before content:
+
+```
+data: {"choices":[{"delta":{"thinking":"Let me reason about this..."}}]}
+data: {"choices":[{"delta":{"content":"The answer is..."}}]}
+```
+
+### When to Use Thinking
+
+- **Enable** for complex problems where you want to see the model's reasoning
+- **Disable** (default) for simple Q&A, code generation, or when you only need the final answer
+- Thinking is omitted entirely from the response when disabled — no performance cost
 
 ## Enabling Claude Code Tools
 
@@ -336,8 +396,9 @@ The `X-Claude-Model` header takes precedence over the `model` field in the reque
 |--------|------|-------------|
 | `Authorization` | `Bearer <key>` | API key (if configured) |
 | `X-Claude-Model` | string | Override request model |
+| `X-Claude-Max-Turns` | integer | Max agent turns (default: unlimited) |
 | `X-Claude-Max-Thinking-Tokens` | integer | Extended thinking token budget |
-| `X-Claude-Max-Turns` | integer | Max agent turns (default: 10) |
+| `X-Claude-Include-Thinking` | `true`/`false` | Return thinking in response |
 | `X-Claude-Allowed-Tools` | comma-separated | Whitelist specific tools |
 | `X-Claude-Disallowed-Tools` | comma-separated | Blacklist specific tools |
 | `X-Claude-Permission-Mode` | string | `default`, `acceptEdits`, `bypassPermissions`, `plan` |
@@ -354,6 +415,7 @@ The `X-Claude-Model` header takes precedence over the `model` field in the reque
 | `stream` | boolean | false | Enable streaming |
 | `stop` | string/array | - | Stop sequences |
 | `enable_tools` | boolean | false | Enable Claude Code tools |
+| `include_thinking` | boolean | false | Return Claude's reasoning process |
 | `session_id` | string | - | Session for multi-turn context |
 | `stream_options` | object | - | `{"include_usage": true}` for usage in stream |
 

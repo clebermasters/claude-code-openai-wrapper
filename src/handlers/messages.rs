@@ -67,6 +67,7 @@ pub async fn anthropic_messages(
             None,
             Some("bypassPermissions"),
             None,
+            false,
         )
         .await
         .map_err(AppError::Internal)?;
