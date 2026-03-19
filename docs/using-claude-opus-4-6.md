@@ -1,43 +1,27 @@
-# Using Claude Opus 4.6
+# Using Claude Opus 4.6 via the Wrapper
 
-Claude Opus 4.6 (`claude-opus-4-6`) is Anthropic's most intelligent model, optimized for building agents and coding. It offers the deepest reasoning capabilities in the Claude model family.
+This guide shows how to use Claude Opus 4.6 (`claude-opus-4-6`) through the `claude-code-openai-wrapper`. The wrapper exposes an OpenAI-compatible API on `http://localhost:8000`, so any tool or library that speaks the OpenAI protocol can use Opus 4.6 without modification.
 
-## Model ID
+## Prerequisites
 
-| Alias | Model ID |
-|-------|----------|
-| Latest | `claude-opus-4-6` |
+- The wrapper is running (via `systemctl` or `cargo run`)
+- If `API_KEY` is set in the wrapper config, you need it for the `Authorization` header
 
-Use `claude-opus-4-6` in API requests. This always points to the latest Opus 4.6 release.
-
-## When to Use Opus 4.6
-
-- Complex architectural decisions requiring deep reasoning
-- Multi-step agent workflows with tool use
-- Advanced coding tasks (refactoring, debugging, system design)
-- Problems requiring extended thinking with large token budgets
-- Research and analysis requiring maximum accuracy
-
-For simpler tasks where speed matters more than depth, consider `claude-sonnet-4-5` or `claude-haiku-4-5`.
-
-## Quick Start
-
-### Prerequisites
-
-1. An Anthropic API key from [console.anthropic.com](https://console.anthropic.com)
-2. Set the key as an environment variable:
+Verify the wrapper is up and Opus 4.6 is listed:
 
 ```bash
-export ANTHROPIC_API_KEY="sk-ant-..."
+curl http://localhost:8000/health
+curl http://localhost:8000/v1/models
 ```
+
+## Basic Request
 
 ### cURL
 
 ```bash
-curl https://api.anthropic.com/v1/messages \
+curl http://localhost:8000/v1/chat/completions \
   -H "content-type: application/json" \
-  -H "x-api-key: $ANTHROPIC_API_KEY" \
-  -H "anthropic-version: 2023-06-01" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
   -d '{
     "model": "claude-opus-4-6",
     "max_tokens": 1024,
@@ -47,114 +31,96 @@ curl https://api.anthropic.com/v1/messages \
   }'
 ```
 
-### Python
+If no `API_KEY` is configured in the wrapper, omit the `Authorization` header.
 
-Install the SDK:
+### Response
 
-```bash
-pip install anthropic
+```json
+{
+  "id": "chatcmpl-a1b2c3d4",
+  "object": "chat.completion",
+  "created": 1710849600,
+  "model": "claude-opus-4-6",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "The CAP theorem states that..."
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 12,
+    "completion_tokens": 150,
+    "total_tokens": 162
+  }
+}
 ```
 
-Basic message:
+## Using the OpenAI Python SDK
+
+Point the `base_url` at the wrapper. No Anthropic SDK needed.
+
+```bash
+pip install openai
+```
 
 ```python
-from anthropic import Anthropic
+from openai import OpenAI
 
-client = Anthropic()  # reads ANTHROPIC_API_KEY from env
+client = OpenAI(
+    base_url="http://localhost:8000/v1",
+    api_key="YOUR_API_KEY",  # or any string if no API_KEY is configured
+)
 
-message = client.messages.create(
+response = client.chat.completions.create(
     model="claude-opus-4-6",
     max_tokens=1024,
     messages=[
-        {"role": "user", "content": "Hello, Claude"}
+        {"role": "system", "content": "You are a senior software architect."},
+        {"role": "user", "content": "How should I structure a microservices project?"},
     ],
 )
-print(message.content[0].text)
+print(response.choices[0].message.content)
 ```
 
-### TypeScript
-
-Install the SDK:
+## Using the OpenAI TypeScript SDK
 
 ```bash
-npm install @anthropic-ai/sdk
+npm install openai
 ```
 
-Basic message:
-
 ```typescript
-import Anthropic from "@anthropic-ai/sdk";
+import OpenAI from "openai";
 
-const client = new Anthropic(); // reads ANTHROPIC_API_KEY from env
+const client = new OpenAI({
+  baseURL: "http://localhost:8000/v1",
+  apiKey: "YOUR_API_KEY",
+});
 
-const message = await client.messages.create({
+const response = await client.chat.completions.create({
   model: "claude-opus-4-6",
   max_tokens: 1024,
   messages: [
-    { role: "user", content: "Hello, Claude" },
+    { role: "system", content: "You are a senior software architect." },
+    { role: "user", content: "How should I structure a microservices project?" },
   ],
 });
-console.log(message.content[0].text);
+console.log(response.choices[0].message.content);
 ```
 
 ## Streaming
 
-Streaming returns tokens as they are generated, improving perceived latency for long responses.
+Set `"stream": true` to receive tokens as they are generated via Server-Sent Events (SSE).
 
-### Python (async)
-
-```python
-import asyncio
-from anthropic import AsyncAnthropic
-
-client = AsyncAnthropic()
-
-async def main():
-    async with client.messages.stream(
-        model="claude-opus-4-6",
-        max_tokens=1024,
-        messages=[{"role": "user", "content": "Write a short story about a robot."}],
-    ) as stream:
-        async for text in stream.text_stream:
-            print(text, end="", flush=True)
-        print()
-
-    final_message = await stream.get_final_message()
-    print(f"Output tokens: {final_message.usage.output_tokens}")
-
-asyncio.run(main())
-```
-
-### TypeScript
-
-```typescript
-import Anthropic from "@anthropic-ai/sdk";
-
-const client = new Anthropic();
-
-const stream = client.messages
-  .stream({
-    model: "claude-opus-4-6",
-    max_tokens: 1024,
-    messages: [
-      { role: "user", content: "Write a short story about a robot." },
-    ],
-  })
-  .on("text", (text) => {
-    process.stdout.write(text);
-  });
-
-const message = await stream.finalMessage();
-console.log(`\nOutput tokens: ${message.usage.output_tokens}`);
-```
-
-### cURL (SSE)
+### cURL
 
 ```bash
-curl https://api.anthropic.com/v1/messages \
+curl http://localhost:8000/v1/chat/completions \
   -H "content-type: application/json" \
-  -H "x-api-key: $ANTHROPIC_API_KEY" \
-  -H "anthropic-version: 2023-06-01" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
   -d '{
     "model": "claude-opus-4-6",
     "max_tokens": 1024,
@@ -165,241 +131,252 @@ curl https://api.anthropic.com/v1/messages \
   }'
 ```
 
-## Extended Thinking
+Each SSE chunk follows the OpenAI format:
 
-Extended thinking lets Opus 4.6 reason through complex problems step by step before producing a final answer. You allocate a `budget_tokens` for the thinking process; these tokens count toward `max_tokens`.
+```
+data: {"id":"chatcmpl-...","object":"chat.completion.chunk","choices":[{"delta":{"content":"Once"},"index":0,"finish_reason":null}]}
+
+data: {"id":"chatcmpl-...","object":"chat.completion.chunk","choices":[{"delta":{"content":" upon"},"index":0,"finish_reason":null}]}
+
+...
+
+data: [DONE]
+```
 
 ### Python
 
 ```python
-from anthropic import Anthropic
-
-client = Anthropic()
-
-response = client.messages.create(
-    model="claude-opus-4-6",
-    max_tokens=16000,
-    thinking={
-        "type": "enabled",
-        "budget_tokens": 10000,
-    },
-    messages=[
-        {
-            "role": "user",
-            "content": "Design a rate limiter that supports both fixed-window and sliding-window algorithms. Compare the trade-offs.",
-        }
-    ],
-)
-
-for block in response.content:
-    if block.type == "thinking":
-        print("=== Thinking ===")
-        print(block.thinking)
-        print()
-    elif block.type == "text":
-        print("=== Answer ===")
-        print(block.text)
-```
-
-### TypeScript
-
-```typescript
-import Anthropic from "@anthropic-ai/sdk";
-
-const client = new Anthropic();
-
-const response = await client.messages.create({
-  model: "claude-opus-4-6",
-  max_tokens: 16000,
-  thinking: {
-    type: "enabled",
-    budget_tokens: 10000,
-  },
-  messages: [
-    {
-      role: "user",
-      content: "Design a rate limiter that supports both fixed-window and sliding-window algorithms. Compare the trade-offs.",
-    },
-  ],
-});
-
-for (const block of response.content) {
-  if (block.type === "thinking") {
-    console.log("=== Thinking ===");
-    console.log(block.thinking);
-    console.log();
-  } else if (block.type === "text") {
-    console.log("=== Answer ===");
-    console.log(block.text);
-  }
-}
-```
-
-**Notes on extended thinking:**
-- `budget_tokens` must be at least 1,024
-- `budget_tokens` must be less than `max_tokens`
-- The thinking blocks appear before the text block in the response
-- Higher budgets let the model reason more deeply but use more tokens
-
-## Tool Use (Function Calling)
-
-Opus 4.6 excels at deciding when and how to use tools, making it ideal for agent workflows.
-
-### Python
-
-```python
-from anthropic import Anthropic
-
-client = Anthropic()
-
-tools = [
-    {
-        "name": "get_weather",
-        "description": "Get the current weather for a given location.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "location": {
-                    "type": "string",
-                    "description": "City and state, e.g. San Francisco, CA",
-                }
-            },
-            "required": ["location"],
-        },
-    }
-]
-
-message = client.messages.create(
+stream = client.chat.completions.create(
     model="claude-opus-4-6",
     max_tokens=1024,
-    tools=tools,
+    stream=True,
     messages=[
-        {"role": "user", "content": "What's the weather in San Francisco?"}
+        {"role": "user", "content": "Write a short story about a robot."},
     ],
 )
-
-if message.stop_reason == "tool_use":
-    tool_use = next(b for b in message.content if b.type == "tool_use")
-    print(f"Tool: {tool_use.name}")
-    print(f"Input: {tool_use.input}")
+for chunk in stream:
+    content = chunk.choices[0].delta.content
+    if content:
+        print(content, end="", flush=True)
+print()
 ```
 
 ### TypeScript
 
 ```typescript
-import Anthropic from "@anthropic-ai/sdk";
-
-const client = new Anthropic();
-
-const message = await client.messages.create({
+const stream = await client.chat.completions.create({
   model: "claude-opus-4-6",
   max_tokens: 1024,
-  tools: [
-    {
-      name: "get_weather",
-      description: "Get the current weather for a given location.",
-      input_schema: {
-        type: "object" as const,
-        properties: {
-          location: {
-            type: "string",
-            description: "City and state, e.g. San Francisco, CA",
-          },
-        },
-        required: ["location"],
-      },
-    },
-  ],
+  stream: true,
   messages: [
-    { role: "user", content: "What's the weather in San Francisco?" },
+    { role: "user", content: "Write a short story about a robot." },
   ],
 });
+for await (const chunk of stream) {
+  const content = chunk.choices[0]?.delta?.content;
+  if (content) process.stdout.write(content);
+}
+console.log();
+```
 
-if (message.stop_reason === "tool_use") {
-  const toolUse = message.content.find((b) => b.type === "tool_use");
-  console.log(`Tool: ${toolUse.name}`);
-  console.log(`Input: ${JSON.stringify(toolUse.input)}`);
+### Stream Usage Tracking
+
+To receive token usage in the final stream chunk, add `stream_options`:
+
+```json
+{
+  "model": "claude-opus-4-6",
+  "stream": true,
+  "stream_options": { "include_usage": true },
+  "messages": [...]
 }
 ```
 
-## System Prompts
+## Extended Thinking
 
-Guide Opus 4.6's behavior with a system prompt:
-
-```python
-message = client.messages.create(
-    model="claude-opus-4-6",
-    max_tokens=1024,
-    system="You are a senior software architect. Be concise and provide code examples.",
-    messages=[
-        {"role": "user", "content": "How should I structure a microservices project?"}
-    ],
-)
-```
-
-## Multi-Turn Conversations
-
-Pass the full conversation history in the `messages` array:
-
-```python
-messages = [
-    {"role": "user", "content": "What is dependency injection?"},
-    {"role": "assistant", "content": "Dependency injection (DI) is a design pattern..."},
-    {"role": "user", "content": "Show me an example in Python."},
-]
-
-message = client.messages.create(
-    model="claude-opus-4-6",
-    max_tokens=1024,
-    messages=messages,
-)
-```
-
-## Using via This Wrapper
-
-The `claude-code-openai-wrapper` translates OpenAI-compatible requests to Claude. After starting the wrapper, send requests using the OpenAI format:
+Control Opus 4.6's reasoning depth with the `X-Claude-Max-Thinking-Tokens` header. This allocates a token budget for the model's internal reasoning before it produces the final answer.
 
 ```bash
 curl http://localhost:8000/v1/chat/completions \
   -H "content-type: application/json" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "X-Claude-Max-Thinking-Tokens: 10000" \
   -d '{
     "model": "claude-opus-4-6",
+    "max_tokens": 16000,
     "messages": [
-      {"role": "user", "content": "Hello, Claude"}
+      {"role": "user", "content": "Design a rate limiter supporting fixed-window and sliding-window. Compare the trade-offs."}
     ]
   }'
 ```
 
-Or with any OpenAI-compatible client library by pointing the base URL to the wrapper:
+In Python, pass the header via `extra_headers`:
 
 ```python
-from openai import OpenAI
-
-client = OpenAI(
-    base_url="http://localhost:8000/v1",
-    api_key="your-wrapper-api-key",  # if API_KEY is set in wrapper config
-)
-
 response = client.chat.completions.create(
     model="claude-opus-4-6",
+    max_tokens=16000,
     messages=[
-        {"role": "user", "content": "Hello, Claude"}
+        {"role": "user", "content": "Design a rate limiter supporting fixed-window and sliding-window."},
     ],
+    extra_headers={
+        "X-Claude-Max-Thinking-Tokens": "10000",
+    },
 )
 print(response.choices[0].message.content)
 ```
 
-## Model Comparison
+## Enabling Claude Code Tools
 
-| Model | Best For | Speed | Depth |
-|-------|----------|-------|-------|
-| `claude-opus-4-6` | Agents, coding, deep reasoning | Slower | Deepest |
-| `claude-sonnet-4-5` | General coding, real-world agents | Balanced | High |
-| `claude-haiku-4-5` | Fast responses, simple tasks | Fastest | Moderate |
+By default, tools are disabled for OpenAI compatibility. Enable them to let Opus 4.6 use Claude Code tools (Read, Write, Edit, Bash, Glob, Grep):
 
-## Further Reading
+```bash
+curl http://localhost:8000/v1/chat/completions \
+  -H "content-type: application/json" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -d '{
+    "model": "claude-opus-4-6",
+    "max_tokens": 4096,
+    "enable_tools": true,
+    "messages": [
+      {"role": "user", "content": "Read the file src/main.rs and explain what it does."}
+    ]
+  }'
+```
 
-- [Anthropic API Reference](https://docs.anthropic.com/en/api/messages)
-- [Extended Thinking Guide](https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking)
-- [Tool Use Guide](https://docs.anthropic.com/en/docs/build-with-claude/tool-use)
-- [Prompt Engineering](https://docs.anthropic.com/en/docs/build-with-claude/prompt-engineering)
+### Controlling Which Tools Are Available
+
+Use custom headers to fine-tune tool access:
+
+```bash
+# Only allow Read and Grep
+curl http://localhost:8000/v1/chat/completions \
+  -H "content-type: application/json" \
+  -H "X-Claude-Allowed-Tools: Read,Grep" \
+  -d '{
+    "model": "claude-opus-4-6",
+    "enable_tools": true,
+    "messages": [
+      {"role": "user", "content": "Search for TODO comments in the codebase."}
+    ]
+  }'
+```
+
+```bash
+# Allow all defaults except Bash
+curl http://localhost:8000/v1/chat/completions \
+  -H "content-type: application/json" \
+  -H "X-Claude-Disallowed-Tools: Bash" \
+  -d '{
+    "model": "claude-opus-4-6",
+    "enable_tools": true,
+    "messages": [...]
+  }'
+```
+
+## Sessions (Multi-Turn Conversations)
+
+The wrapper supports server-side session management. Pass a `session_id` to maintain conversation context across requests:
+
+```python
+# First message
+r1 = client.chat.completions.create(
+    model="claude-opus-4-6",
+    messages=[{"role": "user", "content": "What is dependency injection?"}],
+    extra_body={"session_id": "my-session-1"},
+)
+print(r1.choices[0].message.content)
+
+# Follow-up in same session — context is preserved
+r2 = client.chat.completions.create(
+    model="claude-opus-4-6",
+    messages=[{"role": "user", "content": "Show me an example in Python."}],
+    extra_body={"session_id": "my-session-1"},
+)
+print(r2.choices[0].message.content)
+```
+
+Manage sessions via the REST API:
+
+```bash
+# List sessions
+curl http://localhost:8000/v1/sessions
+
+# Get session details
+curl http://localhost:8000/v1/sessions/my-session-1
+
+# Delete a session
+curl -X DELETE http://localhost:8000/v1/sessions/my-session-1
+
+# Session statistics
+curl http://localhost:8000/v1/sessions/stats
+```
+
+Sessions expire automatically after 1 hour of inactivity.
+
+## Model Override Header
+
+Override the model per-request without changing the body, useful with clients that hardcode a model:
+
+```bash
+curl http://localhost:8000/v1/chat/completions \
+  -H "content-type: application/json" \
+  -H "X-Claude-Model: claude-opus-4-6" \
+  -d '{
+    "model": "gpt-4",
+    "messages": [{"role": "user", "content": "Hello"}]
+  }'
+```
+
+The `X-Claude-Model` header takes precedence over the `model` field in the request body.
+
+## Custom Headers Reference
+
+| Header | Type | Description |
+|--------|------|-------------|
+| `Authorization` | `Bearer <key>` | API key (if configured) |
+| `X-Claude-Model` | string | Override request model |
+| `X-Claude-Max-Thinking-Tokens` | integer | Extended thinking token budget |
+| `X-Claude-Max-Turns` | integer | Max agent turns (default: 10) |
+| `X-Claude-Allowed-Tools` | comma-separated | Whitelist specific tools |
+| `X-Claude-Disallowed-Tools` | comma-separated | Blacklist specific tools |
+| `X-Claude-Permission-Mode` | string | `default`, `acceptEdits`, `bypassPermissions`, `plan` |
+
+## Request Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `model` | string | `claude-sonnet-4-5-20250929` | Model to use |
+| `messages` | array | required | Conversation messages |
+| `max_tokens` | integer | - | Max output tokens |
+| `temperature` | float | 1.0 | Sampling temperature (0.0-2.0) |
+| `top_p` | float | 1.0 | Nucleus sampling (0.0-1.0) |
+| `stream` | boolean | false | Enable streaming |
+| `stop` | string/array | - | Stop sequences |
+| `enable_tools` | boolean | false | Enable Claude Code tools |
+| `session_id` | string | - | Session for multi-turn context |
+| `stream_options` | object | - | `{"include_usage": true}` for usage in stream |
+
+## Available Models
+
+| Model | Best For |
+|-------|----------|
+| `claude-opus-4-6` | Deepest reasoning, agents, complex coding |
+| `claude-sonnet-4-6` | Best coding model, balanced performance |
+| `claude-opus-4-5-20250929` | Premium intelligence + performance |
+| `claude-sonnet-4-5-20250929` | Real-world agents and coding |
+| `claude-haiku-4-5-20251001` | Fast responses, simple tasks |
+
+## Troubleshooting
+
+**401 Unauthorized** — Check your `Authorization: Bearer` header matches the `API_KEY` in `/etc/claude-wrapper/config.env`.
+
+**429 Too Many Requests** — Rate limited. Default: 10 chat requests/minute. Adjust `RATE_LIMIT_CHAT_PER_MINUTE` in config.
+
+**Model not found in /v1/models but still works** — The wrapper passes any model name through to Claude CLI. The `/v1/models` list is informational.
+
+**Check logs:**
+
+```bash
+journalctl -u claude-code-openai-wrapper -f
+```

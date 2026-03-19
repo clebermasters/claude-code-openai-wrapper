@@ -36,6 +36,8 @@ pub const DEFAULT_DISALLOWED_TOOLS: &[&str] = &[
 
 /// Claude Models supported by Claude Agent SDK
 pub const CLAUDE_MODELS: &[&str] = &[
+    "claude-opus-4-6",
+    "claude-sonnet-4-6",
     "claude-opus-4-5-20250929",
     "claude-sonnet-4-5-20250929",
     "claude-haiku-4-5-20251001",
