@@ -83,6 +83,33 @@ impl ParameterValidator {
             }
         }
 
+        if let Some(val) = headers.get("x-claude-max-budget-usd").and_then(|v| v.to_str().ok()) {
+            match val.parse::<f64>() {
+                Ok(n) if n > 0.0 => {
+                    options.insert("max_budget_usd".to_string(), serde_json::json!(n));
+                }
+                Ok(n) => {
+                    warn!("X-Claude-Max-Budget-Usd must be positive, got: {n}");
+                }
+                Err(_) => {
+                    warn!("Invalid X-Claude-Max-Budget-Usd header: {val}");
+                }
+            }
+        }
+
+        if let Some(val) = headers.get("x-claude-fallback-model").and_then(|v| v.to_str().ok()) {
+            let model = val.trim();
+            if !model.is_empty() {
+                options.insert("fallback_model".to_string(), serde_json::json!(model));
+            }
+        }
+
+        if let Some(val) = headers.get("x-claude-append-system-prompt").and_then(|v| v.to_str().ok()) {
+            if !val.is_empty() {
+                options.insert("append_system_prompt".to_string(), serde_json::json!(val));
+            }
+        }
+
         options
     }
 }
@@ -250,6 +277,46 @@ mod tests {
         headers.insert("x-claude-effort", "extreme".parse().unwrap());
         let opts = ParameterValidator::extract_claude_headers(&headers);
         assert!(!opts.contains_key("effort"));
+    }
+
+    #[test]
+    fn test_extract_claude_headers_max_budget_usd() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("x-claude-max-budget-usd", "5.50".parse().unwrap());
+        let opts = ParameterValidator::extract_claude_headers(&headers);
+        assert_eq!(opts["max_budget_usd"], 5.5);
+    }
+
+    #[test]
+    fn test_extract_claude_headers_max_budget_usd_zero_rejected() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("x-claude-max-budget-usd", "0".parse().unwrap());
+        let opts = ParameterValidator::extract_claude_headers(&headers);
+        assert!(!opts.contains_key("max_budget_usd"));
+    }
+
+    #[test]
+    fn test_extract_claude_headers_max_budget_usd_negative_rejected() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("x-claude-max-budget-usd", "-1.0".parse().unwrap());
+        let opts = ParameterValidator::extract_claude_headers(&headers);
+        assert!(!opts.contains_key("max_budget_usd"));
+    }
+
+    #[test]
+    fn test_extract_claude_headers_fallback_model() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("x-claude-fallback-model", "claude-haiku-4-5-20251001".parse().unwrap());
+        let opts = ParameterValidator::extract_claude_headers(&headers);
+        assert_eq!(opts["fallback_model"], "claude-haiku-4-5-20251001");
+    }
+
+    #[test]
+    fn test_extract_claude_headers_append_system_prompt() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("x-claude-append-system-prompt", "Always respond in JSON".parse().unwrap());
+        let opts = ParameterValidator::extract_claude_headers(&headers);
+        assert_eq!(opts["append_system_prompt"], "Always respond in JSON");
     }
 
     #[test]

@@ -73,6 +73,21 @@ pub struct StreamOptions {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct ResponseFormat {
+    pub r#type: String,
+    #[serde(default)]
+    pub json_schema: Option<ResponseFormatSchema>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ResponseFormatSchema {
+    pub name: Option<String>,
+    pub schema: serde_json::Value,
+    #[serde(default)]
+    pub strict: Option<bool>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct ChatCompletionRequest {
     #[serde(default = "default_model")]
     pub model: String,
@@ -102,6 +117,12 @@ pub struct ChatCompletionRequest {
     /// Include Claude's thinking/reasoning in the response
     #[serde(default)]
     pub include_thinking: Option<bool>,
+    /// JSON schema for structured output (passed as --json-schema to CLI)
+    #[serde(default)]
+    pub json_schema: Option<serde_json::Value>,
+    /// OpenAI-compatible response format
+    #[serde(default)]
+    pub response_format: Option<ResponseFormat>,
 }
 
 fn default_model() -> String {
@@ -193,6 +214,22 @@ impl ChatCompletionRequest {
 
     pub fn tools_enabled(&self) -> bool {
         self.enable_tools.unwrap_or(false)
+    }
+
+    /// Resolve the effective JSON schema from either the direct field
+    /// or the OpenAI response_format field.
+    pub fn effective_json_schema(&self) -> Option<String> {
+        if let Some(ref schema) = self.json_schema {
+            return serde_json::to_string(schema).ok();
+        }
+        if let Some(ref rf) = self.response_format {
+            if rf.r#type == "json_schema" {
+                if let Some(ref js) = rf.json_schema {
+                    return serde_json::to_string(&js.schema).ok();
+                }
+            }
+        }
+        None
     }
 }
 
@@ -450,6 +487,42 @@ mod tests {
     fn test_tools_enabled() {
         let req = make_request(r#"{"messages":[{"role":"user","content":"hi"}],"enable_tools":true}"#);
         assert!(req.tools_enabled());
+    }
+
+    // --- json_schema / response_format ---
+
+    #[test]
+    fn test_effective_json_schema_direct() {
+        let req = make_request(r#"{"messages":[{"role":"user","content":"hi"}],"json_schema":{"type":"object","properties":{"answer":{"type":"string"}}}}"#);
+        let schema = req.effective_json_schema().unwrap();
+        assert!(schema.contains("object"));
+        assert!(schema.contains("answer"));
+    }
+
+    #[test]
+    fn test_effective_json_schema_response_format() {
+        let req = make_request(r#"{"messages":[{"role":"user","content":"hi"}],"response_format":{"type":"json_schema","json_schema":{"name":"test","schema":{"type":"object"}}}}"#);
+        let schema = req.effective_json_schema().unwrap();
+        assert!(schema.contains("object"));
+    }
+
+    #[test]
+    fn test_effective_json_schema_direct_takes_priority() {
+        let req = make_request(r#"{"messages":[{"role":"user","content":"hi"}],"json_schema":{"type":"array"},"response_format":{"type":"json_schema","json_schema":{"name":"x","schema":{"type":"object"}}}}"#);
+        let schema = req.effective_json_schema().unwrap();
+        assert!(schema.contains("array"));
+    }
+
+    #[test]
+    fn test_effective_json_schema_none() {
+        let req = make_request(r#"{"messages":[{"role":"user","content":"hi"}]}"#);
+        assert!(req.effective_json_schema().is_none());
+    }
+
+    #[test]
+    fn test_effective_json_schema_text_format_ignored() {
+        let req = make_request(r#"{"messages":[{"role":"user","content":"hi"}],"response_format":{"type":"text"}}"#);
+        assert!(req.effective_json_schema().is_none());
     }
 
     #[test]

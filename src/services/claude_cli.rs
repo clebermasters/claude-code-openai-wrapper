@@ -91,84 +91,84 @@ impl ClaudeCli {
     }
 
     /// Build the full CLI arguments for a completion.
-    fn build_args(
-        &self,
-        prompt: &str,
-        system_prompt: Option<&str>,
-        model: Option<&str>,
-        allowed_tools: Option<&[String]>,
-        disallowed_tools: Option<&[String]>,
-        permission_mode: Option<&str>,
-        stream_json: bool,
-        max_turns: Option<u32>,
-        effort: Option<&str>,
-    ) -> Vec<String> {
+    fn build_args(&self, prompt: &str, opts: &CliOptions, stream_json: bool) -> Vec<String> {
         let mut args = vec![
             "--print".to_string(),
             "--output-format".to_string(),
             if stream_json { "stream-json".to_string() } else { "json".to_string() },
         ];
 
-        // stream-json requires --verbose
         if stream_json {
             args.push("--verbose".to_string());
         }
 
-        if let Some(m) = model {
+        if let Some(ref m) = opts.model {
             args.push("--model".to_string());
-            args.push(m.to_string());
+            args.push(m.clone());
         }
 
-        // --max-turns: per-request override > config > unlimited
-        let turns = max_turns.unwrap_or(self.config.cli_max_turns);
+        if let Some(ref fm) = opts.fallback_model {
+            args.push("--fallback-model".to_string());
+            args.push(fm.clone());
+        }
+
+        let turns = opts.max_turns.unwrap_or(self.config.cli_max_turns);
         if turns > 0 {
             args.push("--max-turns".to_string());
             args.push(turns.to_string());
         }
 
-        if let Some(e) = effort {
+        if let Some(budget) = opts.max_budget_usd {
+            args.push("--max-budget-usd".to_string());
+            args.push(budget.to_string());
+        }
+
+        if let Some(ref e) = opts.effort {
             args.push("--effort".to_string());
-            args.push(e.to_string());
+            args.push(e.clone());
         }
 
-        if let Some(sp) = system_prompt {
+        if let Some(ref sp) = opts.system_prompt {
             args.push("--system-prompt".to_string());
-            args.push(sp.to_string());
+            args.push(sp.clone());
         }
 
-        // Handle tool configuration
-        if let Some(tools) = allowed_tools {
+        if let Some(ref asp) = opts.append_system_prompt {
+            args.push("--append-system-prompt".to_string());
+            args.push(asp.clone());
+        }
+
+        if let Some(ref schema) = opts.json_schema {
+            args.push("--json-schema".to_string());
+            args.push(schema.clone());
+        }
+
+        if let Some(ref tools) = opts.allowed_tools {
             if !tools.is_empty() {
                 args.push("--allowedTools".to_string());
                 args.push(tools.join(","));
             }
         }
 
-        if let Some(tools) = disallowed_tools {
+        if let Some(ref tools) = opts.disallowed_tools {
             if !tools.is_empty() {
-                // Check if ALL tools are being disabled
                 let all_tools: std::collections::HashSet<&str> =
                     crate::constants::CLAUDE_TOOLS.iter().copied().collect();
                 let disallowed_set: std::collections::HashSet<&str> =
                     tools.iter().map(|s| s.as_str()).collect();
-                if disallowed_set == all_tools {
-                    // Don't pass any tools flags - CLI in --print mode runs
-                    // without tools by default. Passing --tools "" breaks arg parsing.
-                } else {
+                if disallowed_set != all_tools {
                     args.push("--disallowedTools".to_string());
                     args.push(tools.join(","));
                 }
             }
         }
 
-        if let Some(pm) = permission_mode {
+        if let Some(ref pm) = opts.permission_mode {
             args.push("--permission-mode".to_string());
-            args.push(pm.to_string());
+            args.push(pm.clone());
         }
 
-        // Prompt goes last as a positional argument
         args.push(prompt.to_string());
-
         args
     }
 
@@ -178,30 +178,13 @@ impl ClaudeCli {
     pub async fn run_completion(
         &self,
         prompt: &str,
-        system_prompt: Option<&str>,
-        model: Option<&str>,
-        allowed_tools: Option<&[String]>,
-        disallowed_tools: Option<&[String]>,
-        permission_mode: Option<&str>,
-        max_turns: Option<u32>,
-        include_thinking: bool,
-        effort: Option<&str>,
+        opts: &CliOptions,
     ) -> Result<CompletionResult, String> {
-        // When thinking is requested, use stream-json internally because
-        // the json output format flattens everything into a "result" string
-        // and drops thinking blocks entirely.
-        if include_thinking {
-            return self.run_completion_with_thinking(
-                prompt, system_prompt, model,
-                allowed_tools, disallowed_tools, permission_mode, max_turns, effort,
-            ).await;
+        if opts.include_thinking {
+            return self.run_completion_with_thinking(prompt, opts).await;
         }
 
-        let args = self.build_args(
-            prompt, system_prompt, model,
-            allowed_tools, disallowed_tools, permission_mode, false, max_turns, effort,
-        );
-
+        let args = self.build_args(prompt, opts, false);
         debug!("Running claude CLI with args: {:?}", args);
 
         let timeout = std::time::Duration::from_millis(self.config.max_timeout_ms);
@@ -234,8 +217,6 @@ impl ClaudeCli {
         .map_err(|_| "Claude CLI timed out".to_string())?;
 
         let stdout = result?;
-
-        // Parse the JSON output
         let text = self.extract_result_text(&stdout);
         let metadata = self.extract_metadata_from_output(&stdout);
 
@@ -246,23 +227,13 @@ impl ClaudeCli {
         })
     }
 
-    /// Run completion using stream-json internally to capture thinking blocks,
-    /// then reassemble into a single CompletionResult.
+    /// Run completion using stream-json internally to capture thinking blocks.
     async fn run_completion_with_thinking(
         &self,
         prompt: &str,
-        system_prompt: Option<&str>,
-        model: Option<&str>,
-        allowed_tools: Option<&[String]>,
-        disallowed_tools: Option<&[String]>,
-        permission_mode: Option<&str>,
-        max_turns: Option<u32>,
-        effort: Option<&str>,
+        opts: &CliOptions,
     ) -> Result<CompletionResult, String> {
-        let mut rx = self.run_completion_stream(
-            prompt, system_prompt, model,
-            allowed_tools, disallowed_tools, permission_mode, max_turns, effort,
-        ).await?;
+        let mut rx = self.run_completion_stream(prompt, opts).await?;
 
         let mut text_parts = Vec::new();
         let mut thinking_parts = Vec::new();
@@ -293,18 +264,9 @@ impl ClaudeCli {
     pub async fn run_completion_stream(
         &self,
         prompt: &str,
-        system_prompt: Option<&str>,
-        model: Option<&str>,
-        allowed_tools: Option<&[String]>,
-        disallowed_tools: Option<&[String]>,
-        permission_mode: Option<&str>,
-        max_turns: Option<u32>,
-        effort: Option<&str>,
+        opts: &CliOptions,
     ) -> Result<tokio::sync::mpsc::Receiver<StreamEvent>, String> {
-        let args = self.build_args(
-            prompt, system_prompt, model,
-            allowed_tools, disallowed_tools, permission_mode, true, max_turns, effort,
-        );
+        let args = self.build_args(prompt, opts, true);
 
         debug!("Running claude CLI (streaming) with args: {:?}", args);
 
@@ -488,6 +450,24 @@ impl ClaudeCli {
         let completion_tokens = (completion.len() / 4).max(1) as u32;
         (prompt_tokens, completion_tokens)
     }
+}
+
+/// Options for CLI invocation. Bundles all optional flags to avoid
+/// positional parameter explosion as we add new CLI features.
+#[derive(Debug, Clone, Default)]
+pub struct CliOptions {
+    pub system_prompt: Option<String>,
+    pub model: Option<String>,
+    pub allowed_tools: Option<Vec<String>>,
+    pub disallowed_tools: Option<Vec<String>>,
+    pub permission_mode: Option<String>,
+    pub max_turns: Option<u32>,
+    pub effort: Option<String>,
+    pub include_thinking: bool,
+    pub max_budget_usd: Option<f64>,
+    pub fallback_model: Option<String>,
+    pub json_schema: Option<String>,
+    pub append_system_prompt: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -888,30 +868,36 @@ mod tests {
 
     // --- build_args ---
 
+    fn opts() -> CliOptions {
+        CliOptions::default()
+    }
+
     #[test]
     fn test_build_args_basic() {
         let cli = make_cli();
-        let args = cli.build_args("hello", None, Some("opus"), None, None, None, false, None, None);
-        assert!(args.contains(&"--print".to_string()));
-        assert!(args.contains(&"json".to_string()));
-        assert!(args.contains(&"--model".to_string()));
-        assert!(args.contains(&"opus".to_string()));
+        let o = CliOptions { model: Some("opus".into()), ..opts() };
+        let args = cli.build_args("hello", &o, false);
+        assert!(args.contains(&"--print".into()));
+        assert!(args.contains(&"json".into()));
+        assert!(args.contains(&"--model".into()));
+        assert!(args.contains(&"opus".into()));
         assert_eq!(args.last().unwrap(), "hello");
-        assert!(!args.contains(&"--verbose".to_string()));
+        assert!(!args.contains(&"--verbose".into()));
     }
 
     #[test]
     fn test_build_args_stream_json() {
         let cli = make_cli();
-        let args = cli.build_args("hello", None, None, None, None, None, true, None, None);
-        assert!(args.contains(&"stream-json".to_string()));
-        assert!(args.contains(&"--verbose".to_string()));
+        let args = cli.build_args("hello", &opts(), true);
+        assert!(args.contains(&"stream-json".into()));
+        assert!(args.contains(&"--verbose".into()));
     }
 
     #[test]
     fn test_build_args_system_prompt() {
         let cli = make_cli();
-        let args = cli.build_args("hello", Some("be helpful"), None, None, None, None, false, None, None);
+        let o = CliOptions { system_prompt: Some("be helpful".into()), ..opts() };
+        let args = cli.build_args("hello", &o, false);
         let idx = args.iter().position(|a| a == "--system-prompt").unwrap();
         assert_eq!(args[idx + 1], "be helpful");
     }
@@ -919,66 +905,118 @@ mod tests {
     #[test]
     fn test_build_args_allowed_tools() {
         let cli = make_cli();
-        let tools = vec!["Read".into(), "Write".into()];
-        let args = cli.build_args("hello", None, None, Some(&tools), None, None, false, None, None);
-        assert!(args.contains(&"--allowedTools".to_string()));
-        assert!(args.contains(&"Read,Write".to_string()));
+        let o = CliOptions { allowed_tools: Some(vec!["Read".into(), "Write".into()]), ..opts() };
+        let args = cli.build_args("hello", &o, false);
+        assert!(args.contains(&"--allowedTools".into()));
+        assert!(args.contains(&"Read,Write".into()));
     }
 
     #[test]
     fn test_build_args_permission_mode() {
         let cli = make_cli();
-        let args = cli.build_args("hello", None, None, None, None, Some("bypassPermissions"), false, None, None);
-        assert!(args.contains(&"--permission-mode".to_string()));
-        assert!(args.contains(&"bypassPermissions".to_string()));
+        let o = CliOptions { permission_mode: Some("bypassPermissions".into()), ..opts() };
+        let args = cli.build_args("hello", &o, false);
+        assert!(args.contains(&"--permission-mode".into()));
+        assert!(args.contains(&"bypassPermissions".into()));
     }
 
     #[test]
     fn test_build_args_all_tools_disabled_skips_flag() {
         let cli = make_cli();
         let all: Vec<String> = crate::constants::CLAUDE_TOOLS.iter().map(|s| s.to_string()).collect();
-        let args = cli.build_args("hello", None, None, None, Some(&all), None, false, None, None);
-        // Should NOT contain --disallowedTools or --tools when all disabled
-        assert!(!args.contains(&"--disallowedTools".to_string()));
-        assert!(!args.contains(&"--tools".to_string()));
+        let o = CliOptions { disallowed_tools: Some(all), ..opts() };
+        let args = cli.build_args("hello", &o, false);
+        assert!(!args.contains(&"--disallowedTools".into()));
     }
 
     #[test]
     fn test_build_args_partial_disallowed() {
         let cli = make_cli();
-        let tools = vec!["Task".into(), "WebFetch".into()];
-        let args = cli.build_args("hello", None, None, None, Some(&tools), None, false, None, None);
-        assert!(args.contains(&"--disallowedTools".to_string()));
-        assert!(args.contains(&"Task,WebFetch".to_string()));
+        let o = CliOptions { disallowed_tools: Some(vec!["Task".into(), "WebFetch".into()]), ..opts() };
+        let args = cli.build_args("hello", &o, false);
+        assert!(args.contains(&"--disallowedTools".into()));
+        assert!(args.contains(&"Task,WebFetch".into()));
     }
 
     #[test]
     fn test_build_args_max_turns() {
         let cli = make_cli();
-        let args = cli.build_args("hello", None, None, None, None, None, false, Some(5), None);
-        assert!(args.contains(&"--max-turns".to_string()));
-        assert!(args.contains(&"5".to_string()));
+        let o = CliOptions { max_turns: Some(5), ..opts() };
+        let args = cli.build_args("hello", &o, false);
+        assert!(args.contains(&"--max-turns".into()));
+        assert!(args.contains(&"5".into()));
     }
 
     #[test]
     fn test_build_args_max_turns_zero_omitted() {
         let cli = make_cli();
-        let args = cli.build_args("hello", None, None, None, None, None, false, Some(0), None);
-        assert!(!args.contains(&"--max-turns".to_string()));
+        let o = CliOptions { max_turns: Some(0), ..opts() };
+        let args = cli.build_args("hello", &o, false);
+        assert!(!args.contains(&"--max-turns".into()));
     }
 
     #[test]
     fn test_build_args_effort() {
         let cli = make_cli();
-        let args = cli.build_args("hello", None, None, None, None, None, false, None, Some("max"));
-        assert!(args.contains(&"--effort".to_string()));
-        assert!(args.contains(&"max".to_string()));
+        let o = CliOptions { effort: Some("max".into()), ..opts() };
+        let args = cli.build_args("hello", &o, false);
+        assert!(args.contains(&"--effort".into()));
+        assert!(args.contains(&"max".into()));
     }
 
     #[test]
     fn test_build_args_effort_none_omitted() {
         let cli = make_cli();
-        let args = cli.build_args("hello", None, None, None, None, None, false, None, None);
-        assert!(!args.contains(&"--effort".to_string()));
+        let args = cli.build_args("hello", &opts(), false);
+        assert!(!args.contains(&"--effort".into()));
+    }
+
+    #[test]
+    fn test_build_args_max_budget_usd() {
+        let cli = make_cli();
+        let o = CliOptions { max_budget_usd: Some(5.5), ..opts() };
+        let args = cli.build_args("hello", &o, false);
+        assert!(args.contains(&"--max-budget-usd".into()));
+        assert!(args.contains(&"5.5".into()));
+    }
+
+    #[test]
+    fn test_build_args_fallback_model() {
+        let cli = make_cli();
+        let o = CliOptions { fallback_model: Some("claude-haiku-4-5-20251001".into()), ..opts() };
+        let args = cli.build_args("hello", &o, false);
+        assert!(args.contains(&"--fallback-model".into()));
+        assert!(args.contains(&"claude-haiku-4-5-20251001".into()));
+    }
+
+    #[test]
+    fn test_build_args_json_schema() {
+        let cli = make_cli();
+        let schema = r#"{"type":"object"}"#.to_string();
+        let o = CliOptions { json_schema: Some(schema.clone()), ..opts() };
+        let args = cli.build_args("hello", &o, false);
+        assert!(args.contains(&"--json-schema".into()));
+        assert!(args.contains(&schema));
+    }
+
+    #[test]
+    fn test_build_args_append_system_prompt() {
+        let cli = make_cli();
+        let o = CliOptions { append_system_prompt: Some("Always respond in JSON".into()), ..opts() };
+        let args = cli.build_args("hello", &o, false);
+        assert!(args.contains(&"--append-system-prompt".into()));
+        assert!(args.contains(&"Always respond in JSON".into()));
+    }
+
+    #[test]
+    fn test_build_args_defaults_omit_optional() {
+        let cli = make_cli();
+        let args = cli.build_args("hello", &opts(), false);
+        assert!(!args.contains(&"--effort".into()));
+        assert!(!args.contains(&"--max-budget-usd".into()));
+        assert!(!args.contains(&"--fallback-model".into()));
+        assert!(!args.contains(&"--json-schema".into()));
+        assert!(!args.contains(&"--append-system-prompt".into()));
+        assert!(!args.contains(&"--max-turns".into()));
     }
 }

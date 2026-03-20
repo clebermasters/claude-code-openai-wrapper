@@ -11,6 +11,7 @@ use uuid::Uuid;
 
 use crate::error::AppError;
 use crate::models::openai::*;
+use crate::services::claude_cli::CliOptions;
 use crate::services::content_filter;
 use crate::services::message_adapter;
 use crate::services::parameter_validator::ParameterValidator;
@@ -88,47 +89,16 @@ async fn generate_non_streaming_response(
         system_prompt = Some(content_filter::filter_content(sp));
     }
 
-    // Build tool options
+    // Build CLI options
     let (allowed, disallowed, permission_mode) =
         build_tool_options(&request, &claude_headers);
 
-    let model = claude_headers
-        .get("model")
-        .and_then(|v| v.as_str())
-        .map(String::from)
-        .unwrap_or_else(|| request.model.clone());
-
-    // Extract max_turns and include_thinking from headers/request
-    let max_turns = claude_headers
-        .get("max_turns")
-        .and_then(|v| v.as_u64())
-        .map(|v| v as u32);
-
-    let include_thinking = claude_headers
-        .get("include_thinking")
-        .and_then(|v| v.as_bool())
-        .or(request.include_thinking)
-        .unwrap_or(false);
-
-    let effort = claude_headers
-        .get("effort")
-        .and_then(|v| v.as_str())
-        .map(String::from);
+    let cli_opts = build_cli_options(&request, &claude_headers, system_prompt, allowed, disallowed, permission_mode);
 
     // Run Claude CLI
     let result = state
         .claude_cli
-        .run_completion(
-            &prompt,
-            system_prompt.as_deref(),
-            Some(&model),
-            allowed.as_deref(),
-            disallowed.as_deref(),
-            permission_mode.as_deref(),
-            max_turns,
-            include_thinking,
-            effort.as_deref(),
-        )
+        .run_completion(&prompt, &cli_opts)
         .await
         .map_err(AppError::Internal)?;
 
@@ -155,7 +125,7 @@ async fn generate_non_streaming_response(
     let completion_tokens = message_adapter::estimate_tokens(&assistant_content);
 
     // Include thinking if requested and available
-    let thinking = if include_thinking {
+    let thinking = if cli_opts.include_thinking {
         result.thinking.clone()
     } else {
         None
@@ -215,39 +185,17 @@ fn generate_streaming_response(
             system_prompt = Some(content_filter::filter_content(sp));
         }
 
-        // Build tool options
+        // Build CLI options
         let (allowed, disallowed, permission_mode) =
             build_tool_options(&request, &claude_headers);
 
         let model_name = request.model.clone();
-
-        // Extract max_turns and include_thinking from headers/request
-        let max_turns = claude_headers
-            .get("max_turns")
-            .and_then(|v| v.as_u64())
-            .map(|v| v as u32);
-
-        let include_thinking = claude_headers
-            .get("include_thinking")
-            .and_then(|v| v.as_bool())
-            .or(request.include_thinking)
-            .unwrap_or(false);
-
-        let effort = claude_headers
-            .get("effort")
-            .and_then(|v| v.as_str())
-            .map(String::from);
+        let cli_opts = build_cli_options(&request, &claude_headers, system_prompt, allowed, disallowed, permission_mode);
+        let include_thinking = cli_opts.include_thinking;
 
         // Start streaming
         let rx = match state.claude_cli.run_completion_stream(
-            &prompt,
-            system_prompt.as_deref(),
-            Some(&model_name),
-            allowed.as_deref(),
-            disallowed.as_deref(),
-            permission_mode.as_deref(),
-            max_turns,
-            effort.as_deref(),
+            &prompt, &cli_opts,
         ).await {
             Ok(rx) => rx,
             Err(e) => {
@@ -440,6 +388,52 @@ fn build_tool_options(
     }
 
     (allowed, disallowed, permission_mode)
+}
+
+fn build_cli_options(
+    request: &ChatCompletionRequest,
+    claude_headers: &std::collections::HashMap<String, serde_json::Value>,
+    system_prompt: Option<String>,
+    allowed: Option<Vec<String>>,
+    disallowed: Option<Vec<String>>,
+    permission_mode: Option<String>,
+) -> CliOptions {
+    CliOptions {
+        system_prompt,
+        model: Some(claude_headers
+            .get("model")
+            .and_then(|v| v.as_str())
+            .map(String::from)
+            .unwrap_or_else(|| request.model.clone())),
+        allowed_tools: allowed,
+        disallowed_tools: disallowed,
+        permission_mode,
+        max_turns: claude_headers
+            .get("max_turns")
+            .and_then(|v| v.as_u64())
+            .map(|v| v as u32),
+        effort: claude_headers
+            .get("effort")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        include_thinking: claude_headers
+            .get("include_thinking")
+            .and_then(|v| v.as_bool())
+            .or(request.include_thinking)
+            .unwrap_or(false),
+        max_budget_usd: claude_headers
+            .get("max_budget_usd")
+            .and_then(|v| v.as_f64()),
+        fallback_model: claude_headers
+            .get("fallback_model")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        json_schema: request.effective_json_schema(),
+        append_system_prompt: claude_headers
+            .get("append_system_prompt")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+    }
 }
 
 fn extract_bearer(headers: &HeaderMap) -> Option<&str> {

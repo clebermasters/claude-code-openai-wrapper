@@ -57,19 +57,17 @@ pub async fn anthropic_messages(
         .map(|s| s.to_string())
         .collect();
 
+    let cli_opts = crate::services::claude_cli::CliOptions {
+        system_prompt,
+        model: Some(request.model.clone()),
+        allowed_tools: Some(allowed),
+        permission_mode: Some("bypassPermissions".to_string()),
+        ..Default::default()
+    };
+
     let result = state
         .claude_cli
-        .run_completion(
-            &prompt,
-            system_prompt.as_deref(),
-            Some(&request.model),
-            Some(&allowed),
-            None,
-            Some("bypassPermissions"),
-            None,
-            false,
-            None,
-        )
+        .run_completion(&prompt, &cli_opts)
         .await
         .map_err(AppError::Internal)?;
 

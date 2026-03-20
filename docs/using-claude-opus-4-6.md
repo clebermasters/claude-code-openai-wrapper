@@ -398,8 +398,11 @@ The `X-Claude-Model` header takes precedence over the `model` field in the reque
 | `X-Claude-Model` | string | Override request model |
 | `X-Claude-Effort` | string | Effort level: `low`, `medium`, `high`, `max` |
 | `X-Claude-Max-Turns` | integer | Max agent turns (default: unlimited) |
+| `X-Claude-Max-Budget-Usd` | float | Max cost in USD before stopping |
+| `X-Claude-Fallback-Model` | string | Auto-switch model on overload |
 | `X-Claude-Max-Thinking-Tokens` | integer | Extended thinking token budget |
 | `X-Claude-Include-Thinking` | `true`/`false` | Return thinking in response |
+| `X-Claude-Append-System-Prompt` | string | Append to system prompt |
 | `X-Claude-Allowed-Tools` | comma-separated | Whitelist specific tools |
 | `X-Claude-Disallowed-Tools` | comma-separated | Blacklist specific tools |
 | `X-Claude-Permission-Mode` | string | `default`, `acceptEdits`, `bypassPermissions`, `plan` |
@@ -417,6 +420,8 @@ The `X-Claude-Model` header takes precedence over the `model` field in the reque
 | `stop` | string/array | - | Stop sequences |
 | `enable_tools` | boolean | false | Enable Claude Code tools |
 | `include_thinking` | boolean | false | Return Claude's reasoning process |
+| `json_schema` | object | - | JSON Schema for structured output |
+| `response_format` | object | - | OpenAI-compatible format (`type: "json_schema"`) |
 | `session_id` | string | - | Session for multi-turn context |
 | `stream_options` | object | - | `{"include_usage": true}` for usage in stream |
 
