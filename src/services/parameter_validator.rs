@@ -110,6 +110,114 @@ impl ParameterValidator {
             }
         }
 
+        // --- Phase 1: Boolean flags ---
+
+        if let Some(val) = headers.get("x-claude-continue").and_then(|v| v.to_str().ok()) {
+            if matches!(val.to_lowercase().as_str(), "true" | "1" | "yes") {
+                options.insert("continue_session".to_string(), serde_json::json!(true));
+            }
+        }
+
+        if let Some(val) = headers.get("x-claude-no-session-persistence").and_then(|v| v.to_str().ok()) {
+            if matches!(val.to_lowercase().as_str(), "true" | "1" | "yes") {
+                options.insert("no_session_persistence".to_string(), serde_json::json!(true));
+            }
+        }
+
+        if let Some(val) = headers.get("x-claude-debug").and_then(|v| v.to_str().ok()) {
+            if matches!(val.to_lowercase().as_str(), "true" | "1" | "yes") {
+                options.insert("debug".to_string(), serde_json::json!(true));
+            }
+        }
+
+        // --- Phase 1: String flags ---
+
+        if let Some(val) = headers.get("x-claude-agent").and_then(|v| v.to_str().ok()) {
+            let agent = val.trim();
+            if !agent.is_empty() {
+                options.insert("agent".to_string(), serde_json::json!(agent));
+            }
+        }
+
+        if let Some(val) = headers.get("x-claude-permission-prompt-tool").and_then(|v| v.to_str().ok()) {
+            let tool = val.trim();
+            if !tool.is_empty() {
+                options.insert("permission_prompt_tool".to_string(), serde_json::json!(tool));
+            }
+        }
+
+        // --- Phase 2: Enum/optional-string flags ---
+
+        if let Some(val) = headers.get("x-claude-input-format").and_then(|v| v.to_str().ok()) {
+            let format = val.to_lowercase();
+            if ["text", "stream-json"].contains(&format.as_str()) {
+                options.insert("input_format".to_string(), serde_json::json!(format));
+            } else {
+                warn!("Invalid X-Claude-Input-Format header: {val}. Valid: text, stream-json");
+            }
+        }
+
+        if let Some(val) = headers.get("x-claude-worktree").and_then(|v| v.to_str().ok()) {
+            let worktree = val.trim();
+            if !worktree.is_empty() {
+                let normalized = if matches!(worktree.to_lowercase().as_str(), "true" | "1" | "yes") {
+                    "true"
+                } else {
+                    worktree
+                };
+                options.insert("worktree".to_string(), serde_json::json!(normalized));
+            }
+        }
+
+        if let Some(val) = headers.get("x-claude-resume").and_then(|v| v.to_str().ok()) {
+            let resume = val.trim();
+            if !resume.is_empty() {
+                options.insert("resume".to_string(), serde_json::json!(resume));
+            }
+        }
+
+        // --- Phase 3: Path flags ---
+
+        if let Some(val) = headers.get("x-claude-system-prompt-file").and_then(|v| v.to_str().ok()) {
+            let path = val.trim();
+            if !path.is_empty() {
+                options.insert("system_prompt_file".to_string(), serde_json::json!(path));
+            }
+        }
+
+        if let Some(val) = headers.get("x-claude-append-system-prompt-file").and_then(|v| v.to_str().ok()) {
+            let path = val.trim();
+            if !path.is_empty() {
+                options.insert("append_system_prompt_file".to_string(), serde_json::json!(path));
+            }
+        }
+
+        // --- Phase 4: Array flags ---
+
+        if let Some(val) = headers.get("x-claude-add-dir").and_then(|v| v.to_str().ok()) {
+            let dirs: Vec<String> = val.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+            if !dirs.is_empty() {
+                options.insert("add_dirs".to_string(), serde_json::json!(dirs));
+            }
+        }
+
+        if let Some(val) = headers.get("x-claude-betas").and_then(|v| v.to_str().ok()) {
+            let betas: Vec<String> = val.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+            if !betas.is_empty() {
+                options.insert("betas".to_string(), serde_json::json!(betas));
+            }
+        }
+
+        if let Some(val) = headers.get("x-claude-tools").and_then(|v| v.to_str().ok()) {
+            let trimmed = val.trim();
+            if trimmed.is_empty() {
+                options.insert("tools".to_string(), serde_json::json!(Vec::<String>::new()));
+            } else {
+                let tools: Vec<String> = trimmed.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+                options.insert("tools".to_string(), serde_json::json!(tools));
+            }
+        }
+
         options
     }
 }
@@ -362,5 +470,229 @@ mod tests {
         headers.insert("x-claude-max-budget-usd", "abc".parse().unwrap());
         let opts = ParameterValidator::extract_claude_headers(&headers);
         assert!(!opts.contains_key("max_budget_usd"));
+    }
+
+    // --- Phase 1: Boolean flags ---
+
+    #[test]
+    fn test_extract_claude_headers_continue_true() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("x-claude-continue", "true".parse().unwrap());
+        let opts = ParameterValidator::extract_claude_headers(&headers);
+        assert_eq!(opts["continue_session"], true);
+    }
+
+    #[test]
+    fn test_extract_claude_headers_continue_yes_and_1() {
+        for val in &["yes", "1", "YES", "True"] {
+            let mut headers = axum::http::HeaderMap::new();
+            headers.insert("x-claude-continue", val.parse().unwrap());
+            let opts = ParameterValidator::extract_claude_headers(&headers);
+            assert_eq!(opts["continue_session"], true, "failed for value: {val}");
+        }
+    }
+
+    #[test]
+    fn test_extract_claude_headers_continue_false_ignored() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("x-claude-continue", "false".parse().unwrap());
+        let opts = ParameterValidator::extract_claude_headers(&headers);
+        assert!(!opts.contains_key("continue_session"));
+    }
+
+    #[test]
+    fn test_extract_claude_headers_no_session_persistence() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("x-claude-no-session-persistence", "true".parse().unwrap());
+        let opts = ParameterValidator::extract_claude_headers(&headers);
+        assert_eq!(opts["no_session_persistence"], true);
+    }
+
+    #[test]
+    fn test_extract_claude_headers_debug_true() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("x-claude-debug", "1".parse().unwrap());
+        let opts = ParameterValidator::extract_claude_headers(&headers);
+        assert_eq!(opts["debug"], true);
+    }
+
+    #[test]
+    fn test_extract_claude_headers_agent() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("x-claude-agent", "code-reviewer".parse().unwrap());
+        let opts = ParameterValidator::extract_claude_headers(&headers);
+        assert_eq!(opts["agent"], "code-reviewer");
+    }
+
+    #[test]
+    fn test_extract_claude_headers_agent_empty_rejected() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("x-claude-agent", "".parse().unwrap());
+        let opts = ParameterValidator::extract_claude_headers(&headers);
+        assert!(!opts.contains_key("agent"));
+    }
+
+    #[test]
+    fn test_extract_claude_headers_permission_prompt_tool() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("x-claude-permission-prompt-tool", "mcp__approval__ask".parse().unwrap());
+        let opts = ParameterValidator::extract_claude_headers(&headers);
+        assert_eq!(opts["permission_prompt_tool"], "mcp__approval__ask");
+    }
+
+    // --- Phase 2: Enum/optional-string flags ---
+
+    #[test]
+    fn test_extract_claude_headers_input_format_text() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("x-claude-input-format", "text".parse().unwrap());
+        let opts = ParameterValidator::extract_claude_headers(&headers);
+        assert_eq!(opts["input_format"], "text");
+    }
+
+    #[test]
+    fn test_extract_claude_headers_input_format_stream_json() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("x-claude-input-format", "stream-json".parse().unwrap());
+        let opts = ParameterValidator::extract_claude_headers(&headers);
+        assert_eq!(opts["input_format"], "stream-json");
+    }
+
+    #[test]
+    fn test_extract_claude_headers_input_format_invalid() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("x-claude-input-format", "xml".parse().unwrap());
+        let opts = ParameterValidator::extract_claude_headers(&headers);
+        assert!(!opts.contains_key("input_format"));
+    }
+
+    #[test]
+    fn test_extract_claude_headers_worktree_true() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("x-claude-worktree", "true".parse().unwrap());
+        let opts = ParameterValidator::extract_claude_headers(&headers);
+        assert_eq!(opts["worktree"], "true");
+    }
+
+    #[test]
+    fn test_extract_claude_headers_worktree_named() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("x-claude-worktree", "feature-branch".parse().unwrap());
+        let opts = ParameterValidator::extract_claude_headers(&headers);
+        assert_eq!(opts["worktree"], "feature-branch");
+    }
+
+    #[test]
+    fn test_extract_claude_headers_worktree_yes_normalized() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("x-claude-worktree", "yes".parse().unwrap());
+        let opts = ParameterValidator::extract_claude_headers(&headers);
+        assert_eq!(opts["worktree"], "true");
+    }
+
+    #[test]
+    fn test_extract_claude_headers_resume() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("x-claude-resume", "abc-123-def".parse().unwrap());
+        let opts = ParameterValidator::extract_claude_headers(&headers);
+        assert_eq!(opts["resume"], "abc-123-def");
+    }
+
+    #[test]
+    fn test_extract_claude_headers_resume_empty_rejected() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("x-claude-resume", "".parse().unwrap());
+        let opts = ParameterValidator::extract_claude_headers(&headers);
+        assert!(!opts.contains_key("resume"));
+    }
+
+    // --- Phase 3: Path flags ---
+
+    #[test]
+    fn test_extract_claude_headers_system_prompt_file() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("x-claude-system-prompt-file", "/etc/prompts/system.txt".parse().unwrap());
+        let opts = ParameterValidator::extract_claude_headers(&headers);
+        assert_eq!(opts["system_prompt_file"], "/etc/prompts/system.txt");
+    }
+
+    #[test]
+    fn test_extract_claude_headers_system_prompt_file_empty_rejected() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("x-claude-system-prompt-file", "".parse().unwrap());
+        let opts = ParameterValidator::extract_claude_headers(&headers);
+        assert!(!opts.contains_key("system_prompt_file"));
+    }
+
+    #[test]
+    fn test_extract_claude_headers_append_system_prompt_file() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("x-claude-append-system-prompt-file", "/tmp/extra.txt".parse().unwrap());
+        let opts = ParameterValidator::extract_claude_headers(&headers);
+        assert_eq!(opts["append_system_prompt_file"], "/tmp/extra.txt");
+    }
+
+    // --- Phase 4: Array flags ---
+
+    #[test]
+    fn test_extract_claude_headers_add_dir_single() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("x-claude-add-dir", "/home/user/project".parse().unwrap());
+        let opts = ParameterValidator::extract_claude_headers(&headers);
+        let dirs = opts["add_dirs"].as_array().unwrap();
+        assert_eq!(dirs.len(), 1);
+        assert_eq!(dirs[0], "/home/user/project");
+    }
+
+    #[test]
+    fn test_extract_claude_headers_add_dir_multiple() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("x-claude-add-dir", "/path1, /path2, /path3".parse().unwrap());
+        let opts = ParameterValidator::extract_claude_headers(&headers);
+        let dirs = opts["add_dirs"].as_array().unwrap();
+        assert_eq!(dirs.len(), 3);
+        assert_eq!(dirs[0], "/path1");
+        assert_eq!(dirs[1], "/path2");
+        assert_eq!(dirs[2], "/path3");
+    }
+
+    #[test]
+    fn test_extract_claude_headers_betas() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("x-claude-betas", "interleaved-thinking,extended-output".parse().unwrap());
+        let opts = ParameterValidator::extract_claude_headers(&headers);
+        let betas = opts["betas"].as_array().unwrap();
+        assert_eq!(betas.len(), 2);
+        assert_eq!(betas[0], "interleaved-thinking");
+        assert_eq!(betas[1], "extended-output");
+    }
+
+    #[test]
+    fn test_extract_claude_headers_tools() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("x-claude-tools", "Read,Write,Bash".parse().unwrap());
+        let opts = ParameterValidator::extract_claude_headers(&headers);
+        let tools = opts["tools"].as_array().unwrap();
+        assert_eq!(tools.len(), 3);
+        assert_eq!(tools[0], "Read");
+    }
+
+    #[test]
+    fn test_extract_claude_headers_tools_empty() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("x-claude-tools", "".parse().unwrap());
+        let opts = ParameterValidator::extract_claude_headers(&headers);
+        let tools = opts["tools"].as_array().unwrap();
+        assert!(tools.is_empty());
+    }
+
+    #[test]
+    fn test_extract_claude_headers_tools_default() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("x-claude-tools", "default".parse().unwrap());
+        let opts = ParameterValidator::extract_claude_headers(&headers);
+        let tools = opts["tools"].as_array().unwrap();
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0], "default");
     }
 }

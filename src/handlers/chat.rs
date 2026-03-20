@@ -433,6 +433,58 @@ fn build_cli_options(
             .get("append_system_prompt")
             .and_then(|v| v.as_str())
             .map(String::from),
+        continue_session: claude_headers
+            .get("continue_session")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
+        no_session_persistence: claude_headers
+            .get("no_session_persistence")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
+        debug: claude_headers
+            .get("debug")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
+        agent: claude_headers
+            .get("agent")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        permission_prompt_tool: claude_headers
+            .get("permission_prompt_tool")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        input_format: claude_headers
+            .get("input_format")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        worktree: claude_headers
+            .get("worktree")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        resume: claude_headers
+            .get("resume")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        system_prompt_file: claude_headers
+            .get("system_prompt_file")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        append_system_prompt_file: claude_headers
+            .get("append_system_prompt_file")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        add_dirs: claude_headers
+            .get("add_dirs")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().filter_map(|s| s.as_str().map(String::from)).collect()),
+        betas: claude_headers
+            .get("betas")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().filter_map(|s| s.as_str().map(String::from)).collect()),
+        tools: claude_headers
+            .get("tools")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().filter_map(|s| s.as_str().map(String::from)).collect()),
     }
 }
 

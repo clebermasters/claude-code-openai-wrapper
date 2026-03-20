@@ -168,6 +168,80 @@ impl ClaudeCli {
             args.push(pm.clone());
         }
 
+        // Phase 1: Boolean/string flags
+        if opts.continue_session {
+            args.push("--continue".to_string());
+        }
+
+        if opts.no_session_persistence {
+            args.push("--no-session-persistence".to_string());
+        }
+
+        if opts.debug {
+            args.push("--debug".to_string());
+        }
+
+        if let Some(ref agent) = opts.agent {
+            args.push("--agent".to_string());
+            args.push(agent.clone());
+        }
+
+        if let Some(ref tool) = opts.permission_prompt_tool {
+            args.push("--permission-prompt-tool".to_string());
+            args.push(tool.clone());
+        }
+
+        // Phase 2: Enum/optional-string flags
+        if let Some(ref format) = opts.input_format {
+            args.push("--input-format".to_string());
+            args.push(format.clone());
+        }
+
+        if let Some(ref wt) = opts.worktree {
+            args.push("--worktree".to_string());
+            if wt != "true" {
+                args.push(wt.clone());
+            }
+        }
+
+        if let Some(ref resume) = opts.resume {
+            args.push("--resume".to_string());
+            args.push(resume.clone());
+        }
+
+        // Phase 3: Path flags (system_prompt_file only if system_prompt is not set)
+        if opts.system_prompt.is_none() {
+            if let Some(ref path) = opts.system_prompt_file {
+                args.push("--system-prompt-file".to_string());
+                args.push(path.clone());
+            }
+        }
+
+        if let Some(ref path) = opts.append_system_prompt_file {
+            args.push("--append-system-prompt-file".to_string());
+            args.push(path.clone());
+        }
+
+        // Phase 4: Array flags
+        if let Some(ref dirs) = opts.add_dirs {
+            for dir in dirs {
+                args.push("--add-dir".to_string());
+                args.push(dir.clone());
+            }
+        }
+
+        if let Some(ref betas) = opts.betas {
+            if !betas.is_empty() {
+                args.push("--betas".to_string());
+                args.push(betas.join(","));
+            }
+        }
+
+        if let Some(ref tools) = opts.tools {
+            args.push("--tools".to_string());
+            args.push(tools.join(","));
+        }
+
         args.push(prompt.to_string());
         args
     }
@@ -468,6 +542,23 @@ pub struct CliOptions {
     pub fallback_model: Option<String>,
     pub json_schema: Option<String>,
     pub append_system_prompt: Option<String>,
+    // Phase 1: Boolean/string flags
+    pub continue_session: bool,
+    pub no_session_persistence: bool,
+    pub debug: bool,
+    pub agent: Option<String>,
+    pub permission_prompt_tool: Option<String>,
+    // Phase 2: Enum/optional-string flags
+    pub input_format: Option<String>,
+    pub worktree: Option<String>,
+    pub resume: Option<String>,
+    // Phase 3: Path flags
+    pub system_prompt_file: Option<String>,
+    pub append_system_prompt_file: Option<String>,
+    // Phase 4: Array flags
+    pub add_dirs: Option<Vec<String>>,
+    pub betas: Option<Vec<String>>,
+    pub tools: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -1018,5 +1109,195 @@ mod tests {
         assert!(!args.contains(&"--json-schema".into()));
         assert!(!args.contains(&"--append-system-prompt".into()));
         assert!(!args.contains(&"--max-turns".into()));
+        // New flags also absent by default
+        assert!(!args.contains(&"--continue".into()));
+        assert!(!args.contains(&"--no-session-persistence".into()));
+        assert!(!args.contains(&"--debug".into()));
+        assert!(!args.contains(&"--agent".into()));
+        assert!(!args.contains(&"--permission-prompt-tool".into()));
+        assert!(!args.contains(&"--input-format".into()));
+        assert!(!args.contains(&"--worktree".into()));
+        assert!(!args.contains(&"--resume".into()));
+        assert!(!args.contains(&"--system-prompt-file".into()));
+        assert!(!args.contains(&"--append-system-prompt-file".into()));
+        assert!(!args.contains(&"--add-dir".into()));
+        assert!(!args.contains(&"--betas".into()));
+        assert!(!args.contains(&"--tools".into()));
+    }
+
+    // --- Phase 1: Boolean/string flags ---
+
+    #[test]
+    fn test_build_args_continue() {
+        let cli = make_cli();
+        let o = CliOptions { continue_session: true, ..opts() };
+        let args = cli.build_args("hello", &o, false);
+        assert!(args.contains(&"--continue".into()));
+    }
+
+    #[test]
+    fn test_build_args_no_session_persistence() {
+        let cli = make_cli();
+        let o = CliOptions { no_session_persistence: true, ..opts() };
+        let args = cli.build_args("hello", &o, false);
+        assert!(args.contains(&"--no-session-persistence".into()));
+    }
+
+    #[test]
+    fn test_build_args_debug() {
+        let cli = make_cli();
+        let o = CliOptions { debug: true, ..opts() };
+        let args = cli.build_args("hello", &o, false);
+        assert!(args.contains(&"--debug".into()));
+    }
+
+    #[test]
+    fn test_build_args_agent() {
+        let cli = make_cli();
+        let o = CliOptions { agent: Some("code-reviewer".into()), ..opts() };
+        let args = cli.build_args("hello", &o, false);
+        let idx = args.iter().position(|a| a == "--agent").unwrap();
+        assert_eq!(args[idx + 1], "code-reviewer");
+    }
+
+    #[test]
+    fn test_build_args_permission_prompt_tool() {
+        let cli = make_cli();
+        let o = CliOptions { permission_prompt_tool: Some("mcp__tool".into()), ..opts() };
+        let args = cli.build_args("hello", &o, false);
+        let idx = args.iter().position(|a| a == "--permission-prompt-tool").unwrap();
+        assert_eq!(args[idx + 1], "mcp__tool");
+    }
+
+    // --- Phase 2: Enum/optional-string flags ---
+
+    #[test]
+    fn test_build_args_input_format() {
+        let cli = make_cli();
+        let o = CliOptions { input_format: Some("stream-json".into()), ..opts() };
+        let args = cli.build_args("hello", &o, false);
+        let idx = args.iter().position(|a| a == "--input-format").unwrap();
+        assert_eq!(args[idx + 1], "stream-json");
+    }
+
+    #[test]
+    fn test_build_args_worktree_bool() {
+        let cli = make_cli();
+        let o = CliOptions { worktree: Some("true".into()), ..opts() };
+        let args = cli.build_args("hello", &o, false);
+        assert!(args.contains(&"--worktree".into()));
+        // "true" should NOT appear as a separate arg (boolean mode)
+        let idx = args.iter().position(|a| a == "--worktree").unwrap();
+        assert_ne!(args.get(idx + 1).map(|s| s.as_str()), Some("true"));
+    }
+
+    #[test]
+    fn test_build_args_worktree_named() {
+        let cli = make_cli();
+        let o = CliOptions { worktree: Some("my-feature".into()), ..opts() };
+        let args = cli.build_args("hello", &o, false);
+        let idx = args.iter().position(|a| a == "--worktree").unwrap();
+        assert_eq!(args[idx + 1], "my-feature");
+    }
+
+    #[test]
+    fn test_build_args_resume() {
+        let cli = make_cli();
+        let o = CliOptions { resume: Some("session-abc".into()), ..opts() };
+        let args = cli.build_args("hello", &o, false);
+        let idx = args.iter().position(|a| a == "--resume").unwrap();
+        assert_eq!(args[idx + 1], "session-abc");
+    }
+
+    // --- Phase 3: Path flags ---
+
+    #[test]
+    fn test_build_args_system_prompt_file() {
+        let cli = make_cli();
+        let o = CliOptions { system_prompt_file: Some("/etc/prompt.txt".into()), ..opts() };
+        let args = cli.build_args("hello", &o, false);
+        let idx = args.iter().position(|a| a == "--system-prompt-file").unwrap();
+        assert_eq!(args[idx + 1], "/etc/prompt.txt");
+    }
+
+    #[test]
+    fn test_build_args_system_prompt_file_ignored_when_system_prompt_set() {
+        let cli = make_cli();
+        let o = CliOptions {
+            system_prompt: Some("inline prompt".into()),
+            system_prompt_file: Some("/etc/prompt.txt".into()),
+            ..opts()
+        };
+        let args = cli.build_args("hello", &o, false);
+        // --system-prompt should be present, --system-prompt-file should NOT
+        assert!(args.contains(&"--system-prompt".into()));
+        assert!(!args.contains(&"--system-prompt-file".into()));
+    }
+
+    #[test]
+    fn test_build_args_append_system_prompt_file() {
+        let cli = make_cli();
+        let o = CliOptions { append_system_prompt_file: Some("/tmp/extra.txt".into()), ..opts() };
+        let args = cli.build_args("hello", &o, false);
+        let idx = args.iter().position(|a| a == "--append-system-prompt-file").unwrap();
+        assert_eq!(args[idx + 1], "/tmp/extra.txt");
+    }
+
+    // --- Phase 4: Array flags ---
+
+    #[test]
+    fn test_build_args_add_dirs() {
+        let cli = make_cli();
+        let o = CliOptions { add_dirs: Some(vec!["/path1".into(), "/path2".into()]), ..opts() };
+        let args = cli.build_args("hello", &o, false);
+        let positions: Vec<usize> = args.iter().enumerate()
+            .filter(|(_, a)| *a == "--add-dir")
+            .map(|(i, _)| i)
+            .collect();
+        assert_eq!(positions.len(), 2);
+        assert_eq!(args[positions[0] + 1], "/path1");
+        assert_eq!(args[positions[1] + 1], "/path2");
+    }
+
+    #[test]
+    fn test_build_args_betas() {
+        let cli = make_cli();
+        let o = CliOptions { betas: Some(vec!["beta1".into(), "beta2".into()]), ..opts() };
+        let args = cli.build_args("hello", &o, false);
+        let idx = args.iter().position(|a| a == "--betas").unwrap();
+        assert_eq!(args[idx + 1], "beta1,beta2");
+    }
+
+    #[test]
+    fn test_build_args_tools() {
+        let cli = make_cli();
+        let o = CliOptions { tools: Some(vec!["Read".into(), "Write".into()]), ..opts() };
+        let args = cli.build_args("hello", &o, false);
+        let idx = args.iter().position(|a| a == "--tools").unwrap();
+        assert_eq!(args[idx + 1], "Read,Write");
+    }
+
+    #[test]
+    fn test_build_args_tools_empty() {
+        let cli = make_cli();
+        let o = CliOptions { tools: Some(vec![]), ..opts() };
+        let args = cli.build_args("hello", &o, false);
+        let idx = args.iter().position(|a| a == "--tools").unwrap();
+        assert_eq!(args[idx + 1], "");
+    }
+
+    #[test]
+    fn test_build_args_prompt_always_last() {
+        let cli = make_cli();
+        let o = CliOptions {
+            continue_session: true,
+            debug: true,
+            agent: Some("test".into()),
+            resume: Some("sid".into()),
+            betas: Some(vec!["b1".into()]),
+            ..opts()
+        };
+        let args = cli.build_args("my prompt", &o, false);
+        assert_eq!(args.last().unwrap(), "my prompt");
     }
 }
