@@ -237,6 +237,53 @@ Response includes a `thinking` field on the message:
 
 When disabled (default), the `thinking` field is omitted entirely — fully backwards-compatible. Streaming also supports thinking via `{"delta": {"thinking": "..."}}` chunks.
 
+### Structured Output (JSON Schema)
+
+Force Claude to return JSON conforming to a schema:
+
+```bash
+curl -X POST http://localhost:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "claude-sonnet-4-5-20250929",
+    "json_schema": {"type": "object", "properties": {"answer": {"type": "string"}, "confidence": {"type": "number"}}},
+    "messages": [{"role": "user", "content": "What is the capital of France?"}]
+  }'
+```
+
+Also supports the OpenAI `response_format` field:
+
+```json
+{
+  "response_format": {
+    "type": "json_schema",
+    "json_schema": {"name": "answer", "schema": {"type": "object", "properties": {"answer": {"type": "string"}}}}
+  }
+}
+```
+
+### Cost Control
+
+Limit spending per request with `X-Claude-Max-Budget-Usd`:
+
+```bash
+curl -X POST http://localhost:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "X-Claude-Max-Budget-Usd: 0.50" \
+  -d '{"model": "claude-opus-4-6", "messages": [{"role": "user", "content": "Analyze this codebase"}], "enable_tools": true}'
+```
+
+### Fallback Model
+
+Auto-switch to a cheaper/faster model when the primary is overloaded:
+
+```bash
+curl -X POST http://localhost:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "X-Claude-Fallback-Model: claude-haiku-4-5-20251001" \
+  -d '{"model": "claude-opus-4-6", "messages": [{"role": "user", "content": "Hello"}]}'
+```
+
 ---
 
 ## API Endpoints

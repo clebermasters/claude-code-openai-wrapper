@@ -435,6 +435,92 @@ The `X-Claude-Model` header takes precedence over the `model` field in the reque
 | `claude-sonnet-4-5-20250929` | Real-world agents and coding |
 | `claude-haiku-4-5-20251001` | Fast responses, simple tasks |
 
+## Structured Output (JSON Schema)
+
+Force Claude to return JSON conforming to a schema. Pass it in the request body — supports both a direct `json_schema` field and the OpenAI-compatible `response_format`:
+
+```bash
+# Direct json_schema field
+curl http://localhost:8000/v1/chat/completions \
+  -H "content-type: application/json" \
+  -d '{
+    "model": "claude-opus-4-6",
+    "json_schema": {
+      "type": "object",
+      "properties": {
+        "answer": {"type": "string"},
+        "confidence": {"type": "number"}
+      },
+      "required": ["answer", "confidence"]
+    },
+    "messages": [{"role": "user", "content": "What is the capital of France?"}]
+  }'
+```
+
+```python
+# OpenAI-compatible response_format
+response = client.chat.completions.create(
+    model="claude-opus-4-6",
+    response_format={
+        "type": "json_schema",
+        "json_schema": {
+            "name": "answer",
+            "schema": {
+                "type": "object",
+                "properties": {"answer": {"type": "string"}},
+            },
+        },
+    },
+    messages=[{"role": "user", "content": "What is the capital of France?"}],
+)
+```
+
+The `json_schema` field takes priority over `response_format` if both are provided.
+
+## Cost Control
+
+Limit spending per request. The CLI stops after reaching the budget:
+
+```bash
+curl http://localhost:8000/v1/chat/completions \
+  -H "content-type: application/json" \
+  -H "X-Claude-Max-Budget-Usd: 0.50" \
+  -d '{"model": "claude-opus-4-6", "enable_tools": true, "messages": [{"role": "user", "content": "Analyze this codebase"}]}'
+```
+
+In Python:
+
+```python
+response = client.chat.completions.create(
+    model="claude-opus-4-6",
+    messages=[{"role": "user", "content": "Analyze this codebase"}],
+    extra_headers={"X-Claude-Max-Budget-Usd": "0.50"},
+    extra_body={"enable_tools": True},
+)
+```
+
+## Fallback Model
+
+Auto-switch to a cheaper/faster model when the primary is overloaded:
+
+```bash
+curl http://localhost:8000/v1/chat/completions \
+  -H "content-type: application/json" \
+  -H "X-Claude-Fallback-Model: claude-haiku-4-5-20251001" \
+  -d '{"model": "claude-opus-4-6", "messages": [{"role": "user", "content": "Hello"}]}'
+```
+
+## Append System Prompt
+
+Layer additional instructions on top of the user's system prompt without replacing it:
+
+```bash
+curl http://localhost:8000/v1/chat/completions \
+  -H "content-type: application/json" \
+  -H "X-Claude-Append-System-Prompt: Always respond in valid JSON" \
+  -d '{"model": "claude-opus-4-6", "messages": [{"role": "system", "content": "You are a helpful assistant."}, {"role": "user", "content": "What is 2+2?"}]}'
+```
+
 ## Troubleshooting
 
 **401 Unauthorized** — Check your `Authorization: Bearer` header matches the `API_KEY` in `/etc/claude-wrapper/config.env`.
