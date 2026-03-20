@@ -339,4 +339,28 @@ mod tests {
         assert!(unsupported.iter().any(|v| v == "stop"));
         assert!(unsupported.iter().any(|v| v == "logit_bias"));
     }
+
+    #[test]
+    fn test_extract_claude_headers_fallback_model_empty_rejected() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("x-claude-fallback-model", "".parse().unwrap());
+        let opts = ParameterValidator::extract_claude_headers(&headers);
+        assert!(!opts.contains_key("fallback_model"));
+    }
+
+    #[test]
+    fn test_extract_claude_headers_append_system_prompt_empty_rejected() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("x-claude-append-system-prompt", "".parse().unwrap());
+        let opts = ParameterValidator::extract_claude_headers(&headers);
+        assert!(!opts.contains_key("append_system_prompt"));
+    }
+
+    #[test]
+    fn test_extract_claude_headers_max_budget_usd_non_numeric() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("x-claude-max-budget-usd", "abc".parse().unwrap());
+        let opts = ParameterValidator::extract_claude_headers(&headers);
+        assert!(!opts.contains_key("max_budget_usd"));
+    }
 }
